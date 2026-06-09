@@ -22,10 +22,11 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	log := logger.New(cfg.App.Env)
+	knowledgeService := service.NewKnowledgeService(cfg.Mock.Enabled, cfg.Knowledge, cfg.RAG, log)
 
 	services := api.Services{
-		Chat:      service.NewChatService(cfg.Mock.Enabled, log),
-		Knowledge: service.NewKnowledgeService(cfg.Mock.Enabled, cfg.Knowledge, log),
+		Chat:      service.NewChatService(cfg.Mock.Enabled, log, knowledgeService),
+		Knowledge: knowledgeService,
 		AIOps:     service.NewAIOpsService(log),
 	}
 

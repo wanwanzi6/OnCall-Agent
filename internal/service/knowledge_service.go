@@ -9,20 +9,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"oncall-agent/internal/infra/config"
 	"oncall-agent/internal/infra/trace"
 	"oncall-agent/internal/infra/upload"
 	"oncall-agent/internal/model/domain"
+	"oncall-agent/internal/rag"
 )
 
 type KnowledgeService struct {
 	mockEnabled bool
 	policy      upload.Policy
 	log         *slog.Logger
+	loader      rag.Loader
+	splitter    rag.Splitter
+	embedder    rag.Embedder
+	vectorStore rag.VectorStore
+	defaultTopK int
+	mu          sync.RWMutex
+	documents   map[string]domain.Document
 }
 
-func NewKnowledgeService(mockEnabled bool, cfg config.KnowledgeConfig, log *slog.Logger) *KnowledgeService {
+func NewKnowledgeService(mockEnabled bool, cfg config.KnowledgeConfig, ragCfg config.RAGConfig, log *slog.Logger) *KnowledgeService {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -33,7 +42,13 @@ func NewKnowledgeService(mockEnabled bool, cfg config.KnowledgeConfig, log *slog
 			MaxFileSizeBytes: cfg.MaxFileSizeBytes,
 			AllowedExts:      cfg.AllowedExts,
 		},
-		log: log,
+		log:         log,
+		loader:      rag.NewFileLoader(),
+		splitter:    rag.NewTextSplitter(ragCfg.ChunkSize, ragCfg.ChunkOverlap),
+		embedder:    rag.NewMockEmbedder(ragCfg.EmbeddingDim),
+		vectorStore: rag.NewMemoryVectorStore(ragCfg.DefaultTopK),
+		defaultTopK: ragCfg.DefaultTopK,
+		documents:   make(map[string]domain.Document),
 	}
 }
 
@@ -89,13 +104,126 @@ func (s *KnowledgeService) SaveUpload(ctx context.Context, header *multipart.Fil
 		return domain.UploadResult{}, err
 	}
 
-	s.log.InfoContext(ctx, "upload saved",
+	indexResult, err := s.IndexFile(ctx, target)
+	if err != nil {
+		return domain.UploadResult{}, err
+	}
+
+	s.log.InfoContext(ctx, "upload saved and indexed",
 		"trace_id", trace.FromContext(ctx),
 		"service_name", "knowledge",
 		"file_name", sanitized,
 		"size", written,
+		"document_id", indexResult.DocumentID,
+		"chunk_count", indexResult.ChunkCount,
 	)
-	return s.uploadResult(sanitized, written), nil
+	result := s.uploadResult(sanitized, written)
+	result.DocID = indexResult.DocumentID
+	result.ChunkCount = indexResult.ChunkCount
+	return result, nil
+}
+
+func (s *KnowledgeService) IndexFile(ctx context.Context, filePath string) (domain.IndexResult, error) {
+	doc, err := s.loader.Load(ctx, filePath)
+	if err != nil {
+		s.log.ErrorContext(ctx, "document load failed",
+			"trace_id", trace.FromContext(ctx),
+			"service_name", "knowledge",
+			"file_path", filePath,
+			"error", err.Error(),
+		)
+		return domain.IndexResult{}, err
+	}
+	chunks, err := s.splitter.Split(ctx, doc)
+	if err != nil {
+		return domain.IndexResult{}, err
+	}
+	texts := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		texts = append(texts, chunk.Content)
+	}
+	vectors, err := s.embedder.EmbedDocuments(ctx, texts)
+	if err != nil {
+		return domain.IndexResult{}, err
+	}
+	if err := s.vectorStore.Upsert(ctx, chunks, vectors); err != nil {
+		return domain.IndexResult{}, err
+	}
+
+	s.mu.Lock()
+	doc.Content = ""
+	s.documents[doc.ID] = doc
+	s.mu.Unlock()
+
+	result := domain.IndexResult{DocumentID: doc.ID, ChunkCount: len(chunks)}
+	s.log.InfoContext(ctx, "document indexed",
+		"trace_id", trace.FromContext(ctx),
+		"service_name", "knowledge",
+		"document_id", result.DocumentID,
+		"chunk_count", result.ChunkCount,
+	)
+	return result, nil
+}
+
+func (s *KnowledgeService) Search(ctx context.Context, query string, topK int) ([]domain.SearchResult, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+	if topK <= 0 {
+		topK = s.defaultTopK
+	}
+	vector, err := s.embedder.EmbedQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	results, err := s.vectorStore.Search(ctx, vector, topK)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]domain.SearchResult, 0, len(results))
+	for _, result := range results {
+		if result.Score > 0 {
+			filtered = append(filtered, result)
+		}
+	}
+
+	s.log.InfoContext(ctx, "knowledge searched",
+		"trace_id", trace.FromContext(ctx),
+		"service_name", "knowledge",
+		"query", query,
+		"top_k", topK,
+		"result_count", len(filtered),
+	)
+	return filtered, nil
+}
+
+func (s *KnowledgeService) ListDocuments(ctx context.Context) ([]domain.Document, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	docs := make([]domain.Document, 0, len(s.documents))
+	for _, doc := range s.documents {
+		docs = append(docs, doc)
+	}
+	return docs, nil
+}
+
+func (s *KnowledgeService) DeleteDocument(ctx context.Context, documentID string) error {
+	if strings.TrimSpace(documentID) == "" {
+		return fmt.Errorf("document_id is required")
+	}
+	if err := s.vectorStore.DeleteByDocumentID(ctx, documentID); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	delete(s.documents, documentID)
+	s.mu.Unlock()
+	s.log.InfoContext(ctx, "document deleted",
+		"trace_id", trace.FromContext(ctx),
+		"service_name", "knowledge",
+		"document_id", documentID,
+	)
+	return nil
 }
 
 func (s *KnowledgeService) uploadResult(fileName string, size int64) domain.UploadResult {
@@ -109,7 +237,7 @@ func (s *KnowledgeService) uploadResult(fileName string, size int64) domain.Uplo
 		FileName:   fileName,
 		FileType:   ext,
 		ChunkCount: chunkCount,
-		DocID:      "mock-doc-service-offline",
+		DocID:      "",
 		NextSteps:  []string{"loader", "splitter", "embedder", "indexer"},
 		Mock:       s.mockEnabled,
 	}

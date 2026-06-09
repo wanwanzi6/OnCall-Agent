@@ -8,6 +8,10 @@ func TestLoadDefaultsAndEnvOverride(t *testing.T) {
 	t.Setenv("MOCK_ENABLED", "false")
 	t.Setenv("KNOWLEDGE_UPLOAD_DIR", "tmp/uploads")
 	t.Setenv("KNOWLEDGE_MAX_FILE_SIZE_BYTES", "1024")
+	t.Setenv("RAG_CHUNK_SIZE", "400")
+	t.Setenv("RAG_CHUNK_OVERLAP", "50")
+	t.Setenv("RAG_EMBEDDING_DIM", "32")
+	t.Setenv("RAG_DEFAULT_TOP_K", "5")
 
 	cfg, err := Load("")
 	if err != nil {
@@ -28,5 +32,8 @@ func TestLoadDefaultsAndEnvOverride(t *testing.T) {
 	}
 	if cfg.Knowledge.MaxFileSizeBytes != 1024 {
 		t.Fatalf("max size = %d, want 1024", cfg.Knowledge.MaxFileSizeBytes)
+	}
+	if cfg.RAG.ChunkSize != 400 || cfg.RAG.ChunkOverlap != 50 || cfg.RAG.EmbeddingDim != 32 || cfg.RAG.DefaultTopK != 5 {
+		t.Fatalf("rag config = %+v", cfg.RAG)
 	}
 }

@@ -65,11 +65,13 @@ func testRouter(t *testing.T) http.Handler {
 			MaxFileSizeBytes: 1024,
 			AllowedExts:      []string{".md", ".txt"},
 		},
+		RAG: config.RAGConfig{ChunkSize: 800, ChunkOverlap: 100, EmbeddingDim: 64, DefaultTopK: 3},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	knowledgeService := service.NewKnowledgeService(true, cfg.Knowledge, cfg.RAG, log)
 	services := Services{
-		Chat:      service.NewChatService(true, log),
-		Knowledge: service.NewKnowledgeService(true, cfg.Knowledge, log),
+		Chat:      service.NewChatService(true, log, knowledgeService),
+		Knowledge: knowledgeService,
 		AIOps:     service.NewAIOpsService(log),
 	}
 	return NewRouter(cfg, services, log)

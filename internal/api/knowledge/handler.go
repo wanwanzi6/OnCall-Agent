@@ -36,4 +36,38 @@ func Register(router *gin.RouterGroup, knowledgeService *service.KnowledgeServic
 		}
 		response.OK(c, result)
 	})
+
+	router.POST("/knowledge/search", func(c *gin.Context) {
+		var req struct {
+			Query string `json:"query" binding:"required"`
+			TopK  int    `json:"top_k"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, "query is required")
+			return
+		}
+		results, err := knowledgeService.Search(c.Request.Context(), req.Query, req.TopK)
+		if err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+		response.OK(c, gin.H{"results": results})
+	})
+
+	router.GET("/knowledge/documents", func(c *gin.Context) {
+		docs, err := knowledgeService.ListDocuments(c.Request.Context())
+		if err != nil {
+			response.InternalError(c, err.Error())
+			return
+		}
+		response.OK(c, gin.H{"documents": docs})
+	})
+
+	router.DELETE("/knowledge/documents/:id", func(c *gin.Context) {
+		if err := knowledgeService.DeleteDocument(c.Request.Context(), c.Param("id")); err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+		response.OK(c, gin.H{"deleted": true})
+	})
 }
