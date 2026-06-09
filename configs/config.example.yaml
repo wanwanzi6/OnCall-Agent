@@ -1,0 +1,8 @@
+server:
+  port: 8080
+
+app:
+  env: dev
+
+mock:
+  enabled: true
