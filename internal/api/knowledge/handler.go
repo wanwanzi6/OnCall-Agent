@@ -11,7 +11,12 @@ func Register(router *gin.RouterGroup, knowledgeService *service.KnowledgeServic
 	router.POST("/knowledge/upload", func(c *gin.Context) {
 		file, err := c.FormFile("file")
 		if err == nil {
-			response.OK(c, knowledgeService.Upload(file.Filename, file.Size))
+			result, uploadErr := knowledgeService.SaveUpload(c.Request.Context(), file)
+			if uploadErr != nil {
+				response.BadRequest(c, uploadErr.Error())
+				return
+			}
+			response.OK(c, result)
 			return
 		}
 
@@ -24,6 +29,11 @@ func Register(router *gin.RouterGroup, knowledgeService *service.KnowledgeServic
 			return
 		}
 
-		response.OK(c, knowledgeService.Upload(req.FileName, req.Size))
+		result, uploadErr := knowledgeService.UploadMetadata(c.Request.Context(), req.FileName, req.Size)
+		if uploadErr != nil {
+			response.BadRequest(c, uploadErr.Error())
+			return
+		}
+		response.OK(c, result)
 	})
 }

@@ -6,3 +6,10 @@ app:
 
 mock:
   enabled: true
+
+knowledge:
+  upload_dir: data/uploads
+  max_file_size_bytes: 2097152
+  allowed_exts:
+    - .md
+    - .txt

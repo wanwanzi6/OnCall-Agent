@@ -9,9 +9,10 @@ import (
 )
 
 type Config struct {
-	Server ServerConfig `yaml:"server"`
-	App    AppConfig    `yaml:"app"`
-	Mock   MockConfig   `yaml:"mock"`
+	Server    ServerConfig    `yaml:"server"`
+	App       AppConfig       `yaml:"app"`
+	Mock      MockConfig      `yaml:"mock"`
+	Knowledge KnowledgeConfig `yaml:"knowledge"`
 }
 
 type ServerConfig struct {
@@ -24,6 +25,12 @@ type AppConfig struct {
 
 type MockConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+type KnowledgeConfig struct {
+	UploadDir        string   `yaml:"upload_dir"`
+	MaxFileSizeBytes int64    `yaml:"max_file_size_bytes"`
+	AllowedExts      []string `yaml:"allowed_exts"`
 }
 
 func Load(path string) (*Config, error) {
@@ -48,6 +55,11 @@ func defaultConfig() *Config {
 		Server: ServerConfig{Port: 8080},
 		App:    AppConfig{Env: "dev"},
 		Mock:   MockConfig{Enabled: true},
+		Knowledge: KnowledgeConfig{
+			UploadDir:        "data/uploads",
+			MaxFileSizeBytes: 2 * 1024 * 1024,
+			AllowedExts:      []string{".md", ".txt"},
+		},
 	}
 }
 
@@ -63,6 +75,14 @@ func applyEnv(cfg *Config) {
 	if enabled := os.Getenv("MOCK_ENABLED"); enabled != "" {
 		if parsed, err := strconv.ParseBool(enabled); err == nil {
 			cfg.Mock.Enabled = parsed
+		}
+	}
+	if uploadDir := os.Getenv("KNOWLEDGE_UPLOAD_DIR"); uploadDir != "" {
+		cfg.Knowledge.UploadDir = uploadDir
+	}
+	if maxSize := os.Getenv("KNOWLEDGE_MAX_FILE_SIZE_BYTES"); maxSize != "" {
+		if parsed, err := strconv.ParseInt(maxSize, 10, 64); err == nil {
+			cfg.Knowledge.MaxFileSizeBytes = parsed
 		}
 	}
 }

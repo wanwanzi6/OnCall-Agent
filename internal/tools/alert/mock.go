@@ -1,11 +1,43 @@
 package alert
 
-import "oncall-agent/internal/model/domain"
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"oncall-agent/internal/model/domain"
+)
+
+type ActiveAlertInput struct {
+	AlertName string
+	Service   string
+}
 
 type MockTool struct{}
 
 func NewMockTool() *MockTool {
 	return &MockTool{}
+}
+
+func (t *MockTool) Name() string {
+	return "mock_alert"
+}
+
+func (t *MockTool) Timeout() time.Duration {
+	return time.Second
+}
+
+func (t *MockTool) Execute(ctx context.Context, input any) (any, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	req, ok := input.(ActiveAlertInput)
+	if !ok {
+		return nil, fmt.Errorf("invalid input for %s", t.Name())
+	}
+	return t.ActiveAlert(req.AlertName, req.Service), nil
 }
 
 func (t *MockTool) ActiveAlert(alertName, service string) domain.Alert {

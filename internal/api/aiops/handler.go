@@ -16,6 +16,11 @@ func Register(router *gin.RouterGroup, aiopsService *service.AIOpsService) {
 			return
 		}
 
-		response.OK(c, aiopsService.Analyze(req.AlertName, req.Service))
+		report, err := aiopsService.Analyze(c.Request.Context(), req.AlertName, req.Service)
+		if err != nil {
+			response.InternalError(c, err.Error())
+			return
+		}
+		response.OK(c, report)
 	})
 }

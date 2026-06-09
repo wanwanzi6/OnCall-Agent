@@ -1,11 +1,42 @@
 package log
 
-import "oncall-agent/internal/model/domain"
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"oncall-agent/internal/model/domain"
+)
+
+type QueryLogsInput struct {
+	Alert domain.Alert
+}
 
 type MockTool struct{}
 
 func NewMockTool() *MockTool {
 	return &MockTool{}
+}
+
+func (t *MockTool) Name() string {
+	return "mock_log"
+}
+
+func (t *MockTool) Timeout() time.Duration {
+	return time.Second
+}
+
+func (t *MockTool) Execute(ctx context.Context, input any) (any, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	req, ok := input.(QueryLogsInput)
+	if !ok {
+		return nil, fmt.Errorf("invalid input for %s", t.Name())
+	}
+	return t.QueryLogs(req.Alert), nil
 }
 
 func (t *MockTool) QueryLogs(alert domain.Alert) domain.Evidence {

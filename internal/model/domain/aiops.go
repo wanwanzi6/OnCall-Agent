@@ -24,9 +24,12 @@ type Evidence struct {
 
 type WorkflowStep struct {
 	Name    string      `json:"name"`
+	Tool    string      `json:"tool,omitempty"`
 	Status  string      `json:"status"`
 	Summary string      `json:"summary"`
 	Output  interface{} `json:"output,omitempty"`
+	Error   string      `json:"error,omitempty"`
+	TraceID string      `json:"trace_id,omitempty"`
 }
 
 type AnalyzeReport struct {
@@ -40,4 +43,5 @@ type AnalyzeReport struct {
 	Conclusion     string         `json:"conclusion"`
 	Workflow       []WorkflowStep `json:"workflow"`
 	Mock           bool           `json:"mock"`
+	TraceID        string         `json:"trace_id,omitempty"`
 }

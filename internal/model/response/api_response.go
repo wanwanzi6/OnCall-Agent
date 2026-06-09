@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"oncall-agent/internal/infra/trace"
 )
 
 const (
@@ -50,5 +52,5 @@ func traceID(c *gin.Context) string {
 			return id
 		}
 	}
-	return ""
+	return trace.FromContext(c.Request.Context())
 }

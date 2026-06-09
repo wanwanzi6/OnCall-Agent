@@ -19,7 +19,12 @@ func Register(router *gin.RouterGroup, chatService *service.ChatService) {
 			return
 		}
 
-		response.OK(c, chatService.Chat(req.Message))
+		result, err := chatService.Chat(c.Request.Context(), req.Message)
+		if err != nil {
+			response.InternalError(c, err.Error())
+			return
+		}
+		response.OK(c, result)
 	})
 
 	router.POST("/chat/stream", func(c *gin.Context) {
@@ -29,11 +34,17 @@ func Register(router *gin.RouterGroup, chatService *service.ChatService) {
 			return
 		}
 
+		chunks, err := chatService.StreamChat(c.Request.Context(), req.Message)
+		if err != nil {
+			response.InternalError(c, err.Error())
+			return
+		}
+
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
 		c.Status(http.StatusOK)
-		for _, chunk := range chatService.StreamChat(req.Message) {
+		for _, chunk := range chunks {
 			c.SSEvent("message", chunk)
 			c.Writer.Flush()
 			time.Sleep(50 * time.Millisecond)
