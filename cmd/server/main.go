@@ -28,10 +28,15 @@ func run() error {
 		return fmt.Errorf("initialize knowledge service: %w", err)
 	}
 
+	aiopsService, err := service.NewAIOpsServiceFromConfig(*cfg, log, knowledgeService)
+	if err != nil {
+		return fmt.Errorf("initialize aiops service: %w", err)
+	}
+
 	services := api.Services{
 		Chat:      service.NewChatService(cfg.Mock.Enabled, log, knowledgeService),
 		Knowledge: knowledgeService,
-		AIOps:     service.NewAIOpsService(log),
+		AIOps:     aiopsService,
 	}
 
 	router := api.NewRouter(cfg, services, log)

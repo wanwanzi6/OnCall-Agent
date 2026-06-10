@@ -15,6 +15,13 @@ knowledge:
     - .markdown
     - .txt
 
+aiops:
+  alert_provider: mock
+  log_provider: mock
+  metric_provider: mock
+  timeout: 10s
+  sop_top_k: 3
+
 rag:
   chunk_size: 800
   chunk_overlap: 100
@@ -36,3 +43,7 @@ milvus:
   collection: oncall_knowledge
   vector_field: vector
   timeout: 10s
+
+prometheus:
+  base_url: http://localhost:9090
+  timeout: 5s

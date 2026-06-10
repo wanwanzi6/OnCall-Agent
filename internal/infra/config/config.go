@@ -10,13 +10,15 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	App       AppConfig       `yaml:"app"`
-	Mock      MockConfig      `yaml:"mock"`
-	Knowledge KnowledgeConfig `yaml:"knowledge"`
-	RAG       RAGConfig       `yaml:"rag"`
-	Embedding EmbeddingConfig `yaml:"embedding"`
-	Milvus    MilvusConfig    `yaml:"milvus"`
+	Server     ServerConfig     `yaml:"server"`
+	App        AppConfig        `yaml:"app"`
+	Mock       MockConfig       `yaml:"mock"`
+	Knowledge  KnowledgeConfig  `yaml:"knowledge"`
+	AIOps      AIOpsConfig      `yaml:"aiops"`
+	RAG        RAGConfig        `yaml:"rag"`
+	Embedding  EmbeddingConfig  `yaml:"embedding"`
+	Milvus     MilvusConfig     `yaml:"milvus"`
+	Prometheus PrometheusConfig `yaml:"prometheus"`
 }
 
 type ServerConfig struct {
@@ -35,6 +37,14 @@ type KnowledgeConfig struct {
 	UploadDir        string   `yaml:"upload_dir"`
 	MaxFileSizeBytes int64    `yaml:"max_file_size_bytes"`
 	AllowedExts      []string `yaml:"allowed_exts"`
+}
+
+type AIOpsConfig struct {
+	AlertProvider  string        `yaml:"alert_provider"`
+	LogProvider    string        `yaml:"log_provider"`
+	MetricProvider string        `yaml:"metric_provider"`
+	Timeout        time.Duration `yaml:"timeout"`
+	SOPTopK        int           `yaml:"sop_top_k"`
 }
 
 type RAGConfig struct {
@@ -65,6 +75,11 @@ type MilvusConfig struct {
 	Timeout     time.Duration `yaml:"timeout"`
 }
 
+type PrometheusConfig struct {
+	BaseURL string        `yaml:"base_url"`
+	Timeout time.Duration `yaml:"timeout"`
+}
+
 func Load(path string) (*Config, error) {
 	cfg := defaultConfig()
 
@@ -92,6 +107,13 @@ func defaultConfig() *Config {
 			MaxFileSizeBytes: 2 * 1024 * 1024,
 			AllowedExts:      []string{".md", ".markdown", ".txt"},
 		},
+		AIOps: AIOpsConfig{
+			AlertProvider:  "mock",
+			LogProvider:    "mock",
+			MetricProvider: "mock",
+			Timeout:        10 * time.Second,
+			SOPTopK:        3,
+		},
 		RAG: RAGConfig{
 			ChunkSize:           800,
 			ChunkOverlap:        100,
@@ -113,6 +135,10 @@ func defaultConfig() *Config {
 			Collection:  "oncall_knowledge",
 			VectorField: "vector",
 			Timeout:     10 * time.Second,
+		},
+		Prometheus: PrometheusConfig{
+			BaseURL: "http://localhost:9090",
+			Timeout: 5 * time.Second,
 		},
 	}
 }
@@ -165,6 +191,25 @@ func applyEnv(cfg *Config) {
 	if provider := os.Getenv("RAG_VECTOR_STORE_PROVIDER"); provider != "" {
 		cfg.RAG.VectorStoreProvider = provider
 	}
+	if provider := os.Getenv("AIOPS_ALERT_PROVIDER"); provider != "" {
+		cfg.AIOps.AlertProvider = provider
+	}
+	if provider := os.Getenv("AIOPS_LOG_PROVIDER"); provider != "" {
+		cfg.AIOps.LogProvider = provider
+	}
+	if provider := os.Getenv("AIOPS_METRIC_PROVIDER"); provider != "" {
+		cfg.AIOps.MetricProvider = provider
+	}
+	if timeout := os.Getenv("AIOPS_TIMEOUT"); timeout != "" {
+		if parsed, err := time.ParseDuration(timeout); err == nil {
+			cfg.AIOps.Timeout = parsed
+		}
+	}
+	if topK := os.Getenv("AIOPS_SOP_TOP_K"); topK != "" {
+		if parsed, err := strconv.Atoi(topK); err == nil {
+			cfg.AIOps.SOPTopK = parsed
+		}
+	}
 	if apiKey := os.Getenv("DASHSCOPE_API_KEY"); apiKey != "" {
 		cfg.Embedding.DashScope.APIKey = apiKey
 	}
@@ -196,6 +241,14 @@ func applyEnv(cfg *Config) {
 	if timeout := os.Getenv("MILVUS_TIMEOUT"); timeout != "" {
 		if parsed, err := time.ParseDuration(timeout); err == nil {
 			cfg.Milvus.Timeout = parsed
+		}
+	}
+	if baseURL := os.Getenv("PROMETHEUS_BASE_URL"); baseURL != "" {
+		cfg.Prometheus.BaseURL = baseURL
+	}
+	if timeout := os.Getenv("PROMETHEUS_TIMEOUT"); timeout != "" {
+		if parsed, err := time.ParseDuration(timeout); err == nil {
+			cfg.Prometheus.Timeout = parsed
 		}
 	}
 }

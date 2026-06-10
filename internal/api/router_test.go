@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"oncall-agent/internal/infra/trace"
 	"oncall-agent/internal/model/response"
 	"oncall-agent/internal/service"
+	aiopstools "oncall-agent/internal/tools/aiops"
 )
 
 func TestTraceIDIsPropagatedToResponse(t *testing.T) {
@@ -54,6 +56,39 @@ func TestTraceIDIsGeneratedForResponse(t *testing.T) {
 	}
 }
 
+func TestAIOpsAnalyzeResponseContainsWorkflowFields(t *testing.T) {
+	router := testRouter(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/aiops/analyze", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(trace.HeaderName, "trace-api-aiops")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var body response.APIResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.TraceID != "trace-api-aiops" {
+		t.Fatalf("outer trace_id = %q", body.TraceID)
+	}
+	data, ok := body.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("data = %T, want object", body.Data)
+	}
+	for _, field := range []string{"trace_id", "report", "alerts", "steps", "evidence", "citations"} {
+		if _, ok := data[field]; !ok {
+			t.Fatalf("data missing field %q: %+v", field, data)
+		}
+	}
+	if data["trace_id"] != "trace-api-aiops" {
+		t.Fatalf("data trace_id = %v", data["trace_id"])
+	}
+}
+
 func testRouter(t *testing.T) http.Handler {
 	t.Helper()
 	cfg := &config.Config{
@@ -66,13 +101,25 @@ func testRouter(t *testing.T) http.Handler {
 			AllowedExts:      []string{".md", ".txt"},
 		},
 		RAG: config.RAGConfig{ChunkSize: 800, ChunkOverlap: 100, EmbeddingDim: 64, DefaultTopK: 3},
+		AIOps: config.AIOpsConfig{
+			AlertProvider:  "mock",
+			LogProvider:    "mock",
+			MetricProvider: "mock",
+		},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	knowledgeService := service.NewKnowledgeService(true, cfg.Knowledge, cfg.RAG, log)
 	services := Services{
 		Chat:      service.NewChatService(true, log, knowledgeService),
 		Knowledge: knowledgeService,
-		AIOps:     service.NewAIOpsService(log),
+		AIOps: service.NewAIOpsServiceWithProviders(
+			log,
+			aiopstools.NewMockAlertProvider(),
+			aiopstools.NewMockLogProvider(),
+			aiopstools.NewMockMetricProvider(),
+			knowledgeService,
+			cfg.AIOps,
+		),
 	}
 	return NewRouter(cfg, services, log)
 }
