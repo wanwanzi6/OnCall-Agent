@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -22,7 +23,10 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	log := logger.New(cfg.App.Env)
-	knowledgeService := service.NewKnowledgeService(cfg.Mock.Enabled, cfg.Knowledge, cfg.RAG, log)
+	knowledgeService, err := service.NewKnowledgeServiceFromConfig(context.Background(), cfg, log)
+	if err != nil {
+		return fmt.Errorf("initialize knowledge service: %w", err)
+	}
 
 	services := api.Services{
 		Chat:      service.NewChatService(cfg.Mock.Enabled, log, knowledgeService),

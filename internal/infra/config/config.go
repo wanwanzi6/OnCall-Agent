@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -14,6 +15,8 @@ type Config struct {
 	Mock      MockConfig      `yaml:"mock"`
 	Knowledge KnowledgeConfig `yaml:"knowledge"`
 	RAG       RAGConfig       `yaml:"rag"`
+	Embedding EmbeddingConfig `yaml:"embedding"`
+	Milvus    MilvusConfig    `yaml:"milvus"`
 }
 
 type ServerConfig struct {
@@ -35,10 +38,31 @@ type KnowledgeConfig struct {
 }
 
 type RAGConfig struct {
-	ChunkSize    int `yaml:"chunk_size"`
-	ChunkOverlap int `yaml:"chunk_overlap"`
-	EmbeddingDim int `yaml:"embedding_dim"`
-	DefaultTopK  int `yaml:"default_top_k"`
+	ChunkSize           int    `yaml:"chunk_size"`
+	ChunkOverlap        int    `yaml:"chunk_overlap"`
+	EmbeddingDim        int    `yaml:"embedding_dim"`
+	DefaultTopK         int    `yaml:"default_top_k"`
+	EmbedderProvider    string `yaml:"embedder_provider"`
+	VectorStoreProvider string `yaml:"vector_store_provider"`
+}
+
+type EmbeddingConfig struct {
+	DashScope DashScopeEmbeddingConfig `yaml:"dashscope"`
+}
+
+type DashScopeEmbeddingConfig struct {
+	APIKey     string        `yaml:"api_key"`
+	Model      string        `yaml:"model"`
+	Dimensions int           `yaml:"dimensions"`
+	Timeout    time.Duration `yaml:"timeout"`
+}
+
+type MilvusConfig struct {
+	Address     string        `yaml:"address"`
+	Database    string        `yaml:"database"`
+	Collection  string        `yaml:"collection"`
+	VectorField string        `yaml:"vector_field"`
+	Timeout     time.Duration `yaml:"timeout"`
 }
 
 func Load(path string) (*Config, error) {
@@ -69,10 +93,26 @@ func defaultConfig() *Config {
 			AllowedExts:      []string{".md", ".markdown", ".txt"},
 		},
 		RAG: RAGConfig{
-			ChunkSize:    800,
-			ChunkOverlap: 100,
-			EmbeddingDim: 64,
-			DefaultTopK:  3,
+			ChunkSize:           800,
+			ChunkOverlap:        100,
+			EmbeddingDim:        64,
+			DefaultTopK:         3,
+			EmbedderProvider:    "mock",
+			VectorStoreProvider: "memory",
+		},
+		Embedding: EmbeddingConfig{
+			DashScope: DashScopeEmbeddingConfig{
+				Model:      "text-embedding-v4",
+				Dimensions: 1024,
+				Timeout:    30 * time.Second,
+			},
+		},
+		Milvus: MilvusConfig{
+			Address:     "localhost:19530",
+			Database:    "agent",
+			Collection:  "oncall_knowledge",
+			VectorField: "vector",
+			Timeout:     10 * time.Second,
 		},
 	}
 }
@@ -117,6 +157,45 @@ func applyEnv(cfg *Config) {
 	if topK := os.Getenv("RAG_DEFAULT_TOP_K"); topK != "" {
 		if parsed, err := strconv.Atoi(topK); err == nil {
 			cfg.RAG.DefaultTopK = parsed
+		}
+	}
+	if provider := os.Getenv("RAG_EMBEDDER_PROVIDER"); provider != "" {
+		cfg.RAG.EmbedderProvider = provider
+	}
+	if provider := os.Getenv("RAG_VECTOR_STORE_PROVIDER"); provider != "" {
+		cfg.RAG.VectorStoreProvider = provider
+	}
+	if apiKey := os.Getenv("DASHSCOPE_API_KEY"); apiKey != "" {
+		cfg.Embedding.DashScope.APIKey = apiKey
+	}
+	if model := os.Getenv("DASHSCOPE_EMBEDDING_MODEL"); model != "" {
+		cfg.Embedding.DashScope.Model = model
+	}
+	if dim := os.Getenv("DASHSCOPE_EMBEDDING_DIM"); dim != "" {
+		if parsed, err := strconv.Atoi(dim); err == nil {
+			cfg.Embedding.DashScope.Dimensions = parsed
+		}
+	}
+	if timeout := os.Getenv("DASHSCOPE_EMBEDDING_TIMEOUT"); timeout != "" {
+		if parsed, err := time.ParseDuration(timeout); err == nil {
+			cfg.Embedding.DashScope.Timeout = parsed
+		}
+	}
+	if address := os.Getenv("MILVUS_ADDRESS"); address != "" {
+		cfg.Milvus.Address = address
+	}
+	if database := os.Getenv("MILVUS_DATABASE"); database != "" {
+		cfg.Milvus.Database = database
+	}
+	if collection := os.Getenv("MILVUS_COLLECTION"); collection != "" {
+		cfg.Milvus.Collection = collection
+	}
+	if vectorField := os.Getenv("MILVUS_VECTOR_FIELD"); vectorField != "" {
+		cfg.Milvus.VectorField = vectorField
+	}
+	if timeout := os.Getenv("MILVUS_TIMEOUT"); timeout != "" {
+		if parsed, err := time.ParseDuration(timeout); err == nil {
+			cfg.Milvus.Timeout = parsed
 		}
 	}
 }

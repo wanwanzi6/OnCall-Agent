@@ -13,6 +13,10 @@ func Register(router *gin.RouterGroup, cfg *config.Config) {
 			"status": "ok",
 			"env":    cfg.App.Env,
 			"mock":   cfg.Mock.Enabled,
+			"rag": gin.H{
+				"embedder_provider":     cfg.RAG.EmbedderProvider,
+				"vector_store_provider": cfg.RAG.VectorStoreProvider,
+			},
 		})
 	})
 }

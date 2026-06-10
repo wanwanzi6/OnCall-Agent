@@ -25,6 +25,9 @@ coverage.out
 *.log
 logs/
 
+# Local service data
+deployments/.data/
+
 # IDE and editor files
 .idea/
 .vscode/

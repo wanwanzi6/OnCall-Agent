@@ -1,4 +1,4 @@
-package rag
+package indexer
 
 import (
 	"context"

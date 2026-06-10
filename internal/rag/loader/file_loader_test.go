@@ -1,4 +1,4 @@
-package rag
+package loader
 
 import (
 	"context"

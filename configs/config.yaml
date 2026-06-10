@@ -20,3 +20,19 @@ rag:
   chunk_overlap: 100
   embedding_dim: 64
   default_top_k: 3
+  embedder_provider: mock
+  vector_store_provider: memory
+
+embedding:
+  dashscope:
+    api_key: ${DASHSCOPE_API_KEY}
+    model: text-embedding-v4
+    dimensions: 1024
+    timeout: 30s
+
+milvus:
+  address: localhost:19530
+  database: agent
+  collection: oncall_knowledge
+  vector_field: vector
+  timeout: 10s

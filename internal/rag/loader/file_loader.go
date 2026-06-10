@@ -1,10 +1,9 @@
-package rag
+package loader
 
 import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,12 +11,7 @@ import (
 	"time"
 
 	"oncall-agent/internal/model/domain"
-)
-
-var (
-	ErrEmptyDocument       = errors.New("document is empty")
-	ErrUnsupportedDocument = errors.New("unsupported document type")
-	ErrMissingDocumentPath = errors.New("document path is required")
+	"oncall-agent/internal/rag"
 )
 
 type FileLoader struct{}
@@ -28,11 +22,11 @@ func NewFileLoader() *FileLoader {
 
 func (l *FileLoader) Load(ctx context.Context, filePath string) (domain.Document, error) {
 	if strings.TrimSpace(filePath) == "" {
-		return domain.Document{}, ErrMissingDocumentPath
+		return domain.Document{}, rag.ErrMissingDocumentPath
 	}
 	ext := strings.ToLower(filepath.Ext(filePath))
 	if ext != ".md" && ext != ".markdown" && ext != ".txt" {
-		return domain.Document{}, fmt.Errorf("%w: %s", ErrUnsupportedDocument, ext)
+		return domain.Document{}, fmt.Errorf("%w: %s", rag.ErrUnsupportedDocument, ext)
 	}
 
 	data, err := os.ReadFile(filePath)
@@ -41,7 +35,7 @@ func (l *FileLoader) Load(ctx context.Context, filePath string) (domain.Document
 	}
 	content := strings.TrimSpace(string(data))
 	if content == "" {
-		return domain.Document{}, ErrEmptyDocument
+		return domain.Document{}, rag.ErrEmptyDocument
 	}
 
 	name := filepath.Base(filePath)

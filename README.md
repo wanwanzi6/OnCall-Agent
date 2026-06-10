@@ -2,15 +2,15 @@
 
 OnCall Agent 是面向后端研发、SRE、平台工程师和一线 Oncall 值班人员的智能故障分析助手。项目定位是“故障排查辅助系统”，不是自动处置系统。
 
-当前阶段已完成阶段 3A：在阶段 2 的配置安全、统一错误响应、Trace ID、工具边界和上传安全基础上，补齐本地 RAG 知识库闭环。当前 RAG 使用 Mock Embedder + Memory VectorStore，不接真实 LLM、真实 Embedding API、Milvus、Prometheus、日志平台或 MCP。
+当前阶段已完成阶段 3B：在阶段 3A 本地 RAG 闭环基础上，新增可配置的真实 RAG provider。默认仍使用 Mock Embedder + Memory VectorStore，便于本地测试、CI 和无外部依赖 demo；也可以通过配置切换到 Eino DashScope Embedder + Milvus VectorStore，用于真实知识库检索。
 
 ## 技术栈
 
-- Go 1.22+
+- Go 1.23+
 - Gin HTTP Framework
 - YAML 配置：`gopkg.in/yaml.v3`
 - Mock 数据：内置确定性数据，不依赖外部服务
-- RAG：本地 Markdown/TXT Loader、标题感知 Splitter、确定性 Mock Embedder、内存向量库
+- RAG：Markdown/TXT Loader、标题感知 Splitter、Mock/Eino DashScope Embedder、Memory/Milvus VectorStore
 - 日志：Go `log/slog`
 
 ## 目录结构
@@ -62,6 +62,22 @@ rag:
   chunk_overlap: 100
   embedding_dim: 64
   default_top_k: 3
+  embedder_provider: mock
+  vector_store_provider: memory
+
+embedding:
+  dashscope:
+    api_key: ${DASHSCOPE_API_KEY}
+    model: text-embedding-v4
+    dimensions: 1024
+    timeout: 30s
+
+milvus:
+  address: localhost:19530
+  database: agent
+  collection: oncall_knowledge
+  vector_field: vector
+  timeout: 10s
 ```
 
 也可以通过环境变量覆盖：
@@ -76,10 +92,61 @@ RAG_CHUNK_SIZE=800 \
 RAG_CHUNK_OVERLAP=100 \
 RAG_EMBEDDING_DIM=64 \
 RAG_DEFAULT_TOP_K=3 \
+RAG_EMBEDDER_PROVIDER=mock \
+RAG_VECTOR_STORE_PROVIDER=memory \
 go run ./cmd/server
 ```
 
 可复制 `.env.example` 或 `configs/config.example.yaml` 作为本地配置模板。仓库不应提交真实 API Key、Token、密钥、个人路径或真实外部平台地址；LLM Key、Embedding Key、Milvus 地址、日志平台 Token 等后续接入时必须从环境变量或配置文件读取。
+
+## RAG Provider
+
+默认模式不依赖外部服务：
+
+```yaml
+rag:
+  embedder_provider: mock
+  vector_store_provider: memory
+```
+
+真实模式使用 Eino DashScope Embedder 和 Milvus VectorStore：
+
+```bash
+DASHSCOPE_API_KEY=your-local-key \
+RAG_EMBEDDER_PROVIDER=dashscope \
+RAG_VECTOR_STORE_PROVIDER=milvus \
+MILVUS_ADDRESS=localhost:19530 \
+MILVUS_DATABASE=agent \
+MILVUS_COLLECTION=oncall_knowledge \
+go run ./cmd/server
+```
+
+DashScope 相关配置：
+
+```bash
+DASHSCOPE_API_KEY=
+DASHSCOPE_EMBEDDING_MODEL=text-embedding-v4
+DASHSCOPE_EMBEDDING_DIM=1024
+DASHSCOPE_EMBEDDING_TIMEOUT=30s
+```
+
+Milvus 相关配置：
+
+```bash
+MILVUS_ADDRESS=localhost:19530
+MILVUS_DATABASE=agent
+MILVUS_COLLECTION=oncall_knowledge
+MILVUS_VECTOR_FIELD=vector
+MILVUS_TIMEOUT=10s
+```
+
+启动本地 Milvus standalone：
+
+```bash
+docker compose -f deployments/docker-compose.milvus.yml up -d
+```
+
+Milvus 数据目录位于 `deployments/.data/`，该目录已加入 `.gitignore`。
 
 ## 测试
 
@@ -88,6 +155,12 @@ go test ./...
 ```
 
 当前测试覆盖配置加载、Trace ID 生成和透传、统一响应 trace_id、文件名清理、文件类型校验、文件大小校验、Mock AI Ops workflow、RAG Loader/Splitter/Mock Embedder/Memory VectorStore、KnowledgeService 索引检索删除闭环，以及 ChatService 的 mock RAG citations。
+
+默认测试不依赖 DashScope、Milvus 或外部网络。Milvus 集成测试默认跳过：
+
+```bash
+RUN_MILVUS_INTEGRATION_TEST=1 go test ./internal/rag -run TestMilvusVectorStoreIntegration
+```
 
 ## API 列表
 
@@ -108,7 +181,7 @@ Content-Type: application/json
 }
 ```
 
-阶段 3A 中，`/api/chat` 会先检索本地知识库。如果命中知识库，会返回 mock RAG 回答和 `citations`；如果没有命中，会提示先上传 SOP 文档。
+`/api/chat` 会先检索知识库。如果命中知识库，会返回 mock RAG 回答和 `citations`；如果没有命中，会提示先上传 SOP 文档。mock+memory 和 dashscope+milvus 模式使用同一套 API 响应结构。
 
 响应示例：
 
@@ -147,7 +220,7 @@ Content-Type: application/json
 
 ### 知识库上传
 
-支持 multipart。阶段 3A 只允许 `.md`、`.markdown` 和 `.txt`，限制文件大小，清理文件名，禁止路径穿越，上传目录由配置控制，保存前会确认目标路径位于上传目录内。文件保存后会执行 Loader -> Splitter -> Mock Embedder -> Memory VectorStore 索引：
+支持 multipart。当前只允许 `.md`、`.markdown` 和 `.txt`，限制文件大小，清理文件名，禁止路径穿越，上传目录由配置控制，保存前会确认目标路径位于上传目录内。文件保存后会执行 Loader -> Splitter -> Embedder -> VectorStore 索引：
 
 ```http
 POST /api/knowledge/upload
@@ -261,12 +334,19 @@ type Tool interface {
 AlertCollector -> SOPRetriever -> EvidenceCollector -> ReportGenerator
 ```
 
-- RAG 当前实现为本地 Mock：Markdown/TXT Loader 读取文档，Splitter 按 Markdown 标题和长度切片，Mock Embedder 生成稳定归一化向量，Memory VectorStore 用 cosine similarity 检索 chunk。
-- RAG 流程日志包含 trace_id、document_id、chunk_count、query、top_k、result_count。当前 mock 模式不会访问外部网络、真实模型、Milvus、真实告警平台、真实日志平台或真实知识库。
+- RAG 支持两种 provider：`mock + memory` 和 `dashscope + milvus`。Service 层只依赖 `Embedder`、`VectorStore` 接口，不直接依赖 Eino 或 Milvus 具体类型。
+- RAG 流程日志包含 trace_id、document_id、chunk_count、query、top_k、result_count、embedder_provider、vector_store_provider。默认 mock 模式不会访问外部网络、真实模型、Milvus、真实告警平台、真实日志平台或真实知识库。
+
+## 常见错误
+
+- `dashscope api key is required`：启用 `RAG_EMBEDDER_PROVIDER=dashscope` 时未配置 `DASHSCOPE_API_KEY`。
+- `milvus address is required`：启用 `RAG_VECTOR_STORE_PROVIDER=milvus` 时未配置 `MILVUS_ADDRESS`。
+- `milvus ... failed`：Milvus 未启动、地址错误、collection 创建失败或网络超时。
+- `embedding dimension mismatch`：Embedder 返回向量维度与 Milvus collection 配置维度不一致。
+- `load milvus collection failed`：collection 创建后加载失败，通常需要检查 Milvus standalone 日志。
 
 ## 后续计划
 
-- 阶段 3B：在现有 `Loader`、`Splitter`、`Embedder`、`VectorStore` 接口边界下，替换为 Eino Embedder + Milvus VectorStore，保持密钥与地址配置化。
 - 阶段 4：接入更完整的向量索引、召回排序和持久化文档记录。
 - 阶段 5：接入 LLM Provider，支持普通聊天和 RAG 问答。
 - 阶段 6：将 AI Ops Mock tools 替换为真实告警、日志和知识库工具。

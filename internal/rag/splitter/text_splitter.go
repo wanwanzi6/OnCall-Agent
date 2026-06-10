@@ -1,4 +1,4 @@
-package rag
+package splitter
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"oncall-agent/internal/model/domain"
+	"oncall-agent/internal/rag"
 )
 
 const (
@@ -36,7 +37,7 @@ func NewTextSplitter(chunkSize, chunkOverlap int) *TextSplitter {
 
 func (s *TextSplitter) Split(ctx context.Context, doc domain.Document) ([]domain.Chunk, error) {
 	if strings.TrimSpace(doc.Content) == "" {
-		return nil, ErrEmptyDocument
+		return nil, rag.ErrEmptyDocument
 	}
 	sections := s.sections(doc)
 	chunks := make([]domain.Chunk, 0)
@@ -55,7 +56,7 @@ func (s *TextSplitter) Split(ctx context.Context, doc domain.Document) ([]domain
 		}
 	}
 	if len(chunks) == 0 {
-		return nil, ErrEmptyDocument
+		return nil, rag.ErrEmptyDocument
 	}
 	return chunks, nil
 }

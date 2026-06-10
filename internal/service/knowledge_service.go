@@ -16,19 +16,25 @@ import (
 	"oncall-agent/internal/infra/upload"
 	"oncall-agent/internal/model/domain"
 	"oncall-agent/internal/rag"
+	"oncall-agent/internal/rag/embedder"
+	"oncall-agent/internal/rag/indexer"
+	"oncall-agent/internal/rag/loader"
+	"oncall-agent/internal/rag/splitter"
 )
 
 type KnowledgeService struct {
-	mockEnabled bool
-	policy      upload.Policy
-	log         *slog.Logger
-	loader      rag.Loader
-	splitter    rag.Splitter
-	embedder    rag.Embedder
-	vectorStore rag.VectorStore
-	defaultTopK int
-	mu          sync.RWMutex
-	documents   map[string]domain.Document
+	mockEnabled         bool
+	policy              upload.Policy
+	log                 *slog.Logger
+	loader              rag.Loader
+	splitter            rag.Splitter
+	embedder            rag.Embedder
+	vectorStore         rag.VectorStore
+	defaultTopK         int
+	embedderProvider    string
+	vectorStoreProvider string
+	mu                  sync.RWMutex
+	documents           map[string]domain.Document
 }
 
 func NewKnowledgeService(mockEnabled bool, cfg config.KnowledgeConfig, ragCfg config.RAGConfig, log *slog.Logger) *KnowledgeService {
@@ -42,13 +48,51 @@ func NewKnowledgeService(mockEnabled bool, cfg config.KnowledgeConfig, ragCfg co
 			MaxFileSizeBytes: cfg.MaxFileSizeBytes,
 			AllowedExts:      cfg.AllowedExts,
 		},
-		log:         log,
-		loader:      rag.NewFileLoader(),
-		splitter:    rag.NewTextSplitter(ragCfg.ChunkSize, ragCfg.ChunkOverlap),
-		embedder:    rag.NewMockEmbedder(ragCfg.EmbeddingDim),
-		vectorStore: rag.NewMemoryVectorStore(ragCfg.DefaultTopK),
-		defaultTopK: ragCfg.DefaultTopK,
-		documents:   make(map[string]domain.Document),
+		log:                 log,
+		loader:              loader.NewFileLoader(),
+		splitter:            splitter.NewTextSplitter(ragCfg.ChunkSize, ragCfg.ChunkOverlap),
+		embedder:            embedder.NewMockEmbedder(ragCfg.EmbeddingDim),
+		vectorStore:         indexer.NewMemoryVectorStore(ragCfg.DefaultTopK),
+		defaultTopK:         ragCfg.DefaultTopK,
+		embedderProvider:    rag.EmbedderProviderMock,
+		vectorStoreProvider: rag.VectorStoreProviderMemory,
+		documents:           make(map[string]domain.Document),
+	}
+}
+
+func NewKnowledgeServiceFromConfig(ctx context.Context, cfg *config.Config, log *slog.Logger) (*KnowledgeService, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	embedder, err := rag.NewEmbedder(ctx, *cfg)
+	if err != nil {
+		return nil, err
+	}
+	vectorStore, err := rag.NewVectorStore(ctx, *cfg)
+	if err != nil {
+		return nil, err
+	}
+	service := NewKnowledgeService(cfg.Mock.Enabled, cfg.Knowledge, cfg.RAG, log)
+	service.embedder = embedder
+	service.vectorStore = vectorStore
+	service.embedderProvider = cfg.RAG.EmbedderProvider
+	service.vectorStoreProvider = cfg.RAG.VectorStoreProvider
+	log.InfoContext(ctx, "knowledge service initialized",
+		"trace_id", trace.FromContext(ctx),
+		"service_name", "knowledge",
+		"embedder_provider", service.embedderProvider,
+		"vector_store_provider", service.vectorStoreProvider,
+	)
+	return service, nil
+}
+
+func (s *KnowledgeService) ProviderStatus() map[string]string {
+	return map[string]string{
+		"embedder_provider":     s.embedderProvider,
+		"vector_store_provider": s.vectorStoreProvider,
 	}
 }
 
