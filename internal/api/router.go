@@ -29,7 +29,7 @@ func NewRouter(cfg *config.Config, services Services, log *slog.Logger) *gin.Eng
 	}
 
 	router := gin.New()
-	router.Use(TraceID(), AccessLog(log), gin.CustomRecovery(func(c *gin.Context, recovered any) {
+	router.Use(TraceID(), CORS(), AccessLog(log), gin.CustomRecovery(func(c *gin.Context, recovered any) {
 		log.ErrorContext(c.Request.Context(), "panic recovered",
 			"trace_id", c.GetString("trace_id"),
 			"error", recovered,

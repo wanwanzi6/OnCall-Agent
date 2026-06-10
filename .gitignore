@@ -2,6 +2,8 @@
 bin/
 dist/
 build/
+node_modules/
+*.tsbuildinfo
 *.exe
 *.exe~
 *.dll
@@ -26,6 +28,7 @@ coverage.out
 logs/
 
 # Local service data
+data/
 deployments/.data/
 
 # IDE and editor files
