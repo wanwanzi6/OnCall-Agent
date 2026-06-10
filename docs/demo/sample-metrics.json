@@ -1,0 +1,20 @@
+[
+  {
+    "timestamp": "2026-06-10T09:38:00+08:00",
+    "metric": "restart_count",
+    "value": 3,
+    "labels": {
+      "service": "billing-service",
+      "region": "ap-guangzhou"
+    }
+  },
+  {
+    "timestamp": "2026-06-10T09:43:00+08:00",
+    "metric": "error_rate",
+    "value": 0.18,
+    "labels": {
+      "service": "billing-service",
+      "region": "ap-guangzhou"
+    }
+  }
+]

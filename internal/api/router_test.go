@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -120,6 +121,134 @@ func TestAIOpsAnalyzeAgentFallbackResponseContainsTraceAndFallbackInfo(t *testin
 	if data["fallback_used"] != true {
 		t.Fatalf("fallback_used = %v, want true", data["fallback_used"])
 	}
+}
+
+func TestUploadDocumentThenKnowledgeSearchSucceeds(t *testing.T) {
+	router := testRouter(t)
+	uploadSOP(t, router, "trace-upload-search")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/knowledge/search", bytes.NewBufferString(`{"query":"服务下线 panic restart_count","top_k":3}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(trace.HeaderName, "trace-search")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	data := responseData(t, w.Body.Bytes())
+	results := data["results"].([]any)
+	if len(results) == 0 {
+		t.Fatalf("expected search results: %+v", data)
+	}
+}
+
+func TestUploadSOPThenChatReturnsCitations(t *testing.T) {
+	router := testRouter(t)
+	uploadSOP(t, router, "trace-upload-chat")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewBufferString(`{"message":"服务下线告警应该怎么处理？"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(trace.HeaderName, "trace-chat-rag")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	data := responseData(t, w.Body.Bytes())
+	citations := data["citations"].([]any)
+	if len(citations) == 0 {
+		t.Fatalf("expected chat citations: %+v", data)
+	}
+	if data["mock"] != true {
+		t.Fatalf("mock = %v, want true", data["mock"])
+	}
+}
+
+func TestUploadSOPThenAIOpsReturnsFullWorkflow(t *testing.T) {
+	router := testRouter(t)
+	uploadSOP(t, router, "trace-upload-aiops")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/aiops/analyze", bytes.NewBufferString(`{"alert_name":"服务下线","service":"billing-service"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(trace.HeaderName, "trace-aiops-full")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	data := responseData(t, w.Body.Bytes())
+	for _, field := range []string{"alerts", "steps", "evidence", "citations", "report"} {
+		if _, ok := data[field]; !ok {
+			t.Fatalf("missing %s in aiops response: %+v", field, data)
+		}
+	}
+	if len(data["alerts"].([]any)) == 0 || len(data["steps"].([]any)) == 0 || len(data["evidence"].([]any)) == 0 || len(data["citations"].([]any)) == 0 {
+		t.Fatalf("expected full aiops workflow data: %+v", data)
+	}
+	report := data["report"].(string)
+	if !bytes.Contains([]byte(report), []byte("应用 panic")) {
+		t.Fatalf("report missing expected root cause:\n%s", report)
+	}
+}
+
+func uploadSOP(t *testing.T, router http.Handler, traceID string) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "告警处理手册.md")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	_, _ = part.Write([]byte(`# 服务下线
+
+告警解释：服务下线可能因为服务 panic，导致 pod 重启造成的。
+
+## 处理步骤
+
+1. 根据关键字 "panic" 查询最近 1 小时日志。
+2. 结合 panic 堆栈分析导致服务重启的代码问题。
+3. 检查 restart_count 是否增加。
+`))
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/knowledge/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set(trace.HeaderName, traceID)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("upload status = %d body=%s", w.Code, w.Body.String())
+	}
+	data := responseData(t, w.Body.Bytes())
+	if data["doc_id"] == "" || data["chunk_count"].(float64) == 0 {
+		t.Fatalf("unexpected upload response: %+v", data)
+	}
+}
+
+func responseData(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	var body response.APIResponse
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.Code != 0 {
+		t.Fatalf("response code = %d message=%s", body.Code, body.Message)
+	}
+	data, ok := body.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("data = %T, want object", body.Data)
+	}
+	return data
 }
 
 func testRouter(t *testing.T) http.Handler {

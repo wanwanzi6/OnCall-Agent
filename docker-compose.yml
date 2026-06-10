@@ -1,0 +1,111 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: deployments/backend.Dockerfile
+    image: oncall-agent-backend:local
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      SERVER_PORT: ${SERVER_PORT:-8080}
+      MOCK_ENABLED: ${MOCK_ENABLED:-true}
+      KNOWLEDGE_UPLOAD_DIR: ${KNOWLEDGE_UPLOAD_DIR:-data/uploads}
+      KNOWLEDGE_MAX_FILE_SIZE_BYTES: ${KNOWLEDGE_MAX_FILE_SIZE_BYTES:-2097152}
+      RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-800}
+      RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-100}
+      RAG_EMBEDDING_DIM: ${RAG_EMBEDDING_DIM:-64}
+      RAG_DEFAULT_TOP_K: ${RAG_DEFAULT_TOP_K:-3}
+      RAG_EMBEDDER_PROVIDER: ${RAG_EMBEDDER_PROVIDER:-mock}
+      RAG_VECTOR_STORE_PROVIDER: ${RAG_VECTOR_STORE_PROVIDER:-memory}
+      AIOPS_MODE: ${AIOPS_MODE:-rule}
+      AIOPS_FALLBACK_TO_RULE: ${AIOPS_FALLBACK_TO_RULE:-true}
+      AIOPS_ALERT_PROVIDER: ${AIOPS_ALERT_PROVIDER:-mock}
+      AIOPS_LOG_PROVIDER: ${AIOPS_LOG_PROVIDER:-mock}
+      AIOPS_METRIC_PROVIDER: ${AIOPS_METRIC_PROVIDER:-mock}
+      AIOPS_AGENT_MAX_STEPS: ${AIOPS_AGENT_MAX_STEPS:-12}
+      AIOPS_AGENT_TIMEOUT: ${AIOPS_AGENT_TIMEOUT:-60s}
+      AIOPS_TIMEOUT: ${AIOPS_TIMEOUT:-10s}
+      AIOPS_SOP_TOP_K: ${AIOPS_SOP_TOP_K:-3}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-30s}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_EMBEDDING_MODEL: ${DASHSCOPE_EMBEDDING_MODEL:-text-embedding-v4}
+      DASHSCOPE_EMBEDDING_DIM: ${DASHSCOPE_EMBEDDING_DIM:-1024}
+      DASHSCOPE_EMBEDDING_TIMEOUT: ${DASHSCOPE_EMBEDDING_TIMEOUT:-30s}
+      MILVUS_ADDRESS: ${MILVUS_ADDRESS:-milvus:19530}
+      MILVUS_DATABASE: ${MILVUS_DATABASE:-agent}
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-oncall_knowledge}
+      MILVUS_VECTOR_FIELD: ${MILVUS_VECTOR_FIELD:-vector}
+      MILVUS_TIMEOUT: ${MILVUS_TIMEOUT:-10s}
+      PROMETHEUS_BASE_URL: ${PROMETHEUS_BASE_URL:-http://localhost:9090}
+      PROMETHEUS_TIMEOUT: ${PROMETHEUS_TIMEOUT:-5s}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - ./data/uploads:/app/data/uploads
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deployments/frontend.Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    image: oncall-agent-frontend:local
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      - backend
+
+  etcd:
+    profiles: ["milvus"]
+    image: quay.io/coreos/etcd:v3.5.18
+    command:
+      - etcd
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --data-dir=/etcd
+    volumes:
+      - ./deployments/.data/etcd:/etcd
+
+  minio:
+    profiles: ["milvus"]
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    command: minio server /minio_data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - ./deployments/.data/minio:/minio_data
+
+  milvus:
+    profiles: ["milvus"]
+    image: milvusdb/milvus:v2.5.4
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_WEB_PORT:-9091}:9091"
+    volumes:
+      - ./deployments/.data/milvus:/var/lib/milvus
+    depends_on:
+      - etcd
+      - minio
+
+  attu:
+    profiles: ["milvus"]
+    image: zilliz/attu:v2.4
+    environment:
+      MILVUS_URL: milvus:19530
+    ports:
+      - "${ATTU_PORT:-8000}:3000"
+    depends_on:
+      - milvus

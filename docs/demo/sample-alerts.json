@@ -1,0 +1,18 @@
+[
+  {
+    "id": "alert-billing-service-down",
+    "name": "服务下线",
+    "alert_name": "服务下线",
+    "service": "billing-service",
+    "severity": "critical",
+    "status": "firing",
+    "description": "服务实例下线，可能由 panic 或 pod 重启导致",
+    "region": "ap-guangzhou",
+    "instance": "billing-service-0",
+    "triggered_at": "2026-06-10T09:30:00+08:00",
+    "labels": {
+      "namespace": "prod",
+      "instance": "billing-service-0"
+    }
+  }
+]

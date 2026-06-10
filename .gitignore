@@ -17,6 +17,7 @@ node_modules/
 .gopath/
 .goenv
 coverage.out
+coverage/
 
 # Environment and secrets
 .env
@@ -30,6 +31,9 @@ logs/
 # Local service data
 data/
 deployments/.data/
+deployments/volumes/
+volumes/
+tmp/
 
 # IDE and editor files
 .idea/
