@@ -11,6 +11,7 @@ import (
 	"oncall-agent/internal/infra/config"
 	"oncall-agent/internal/infra/trace"
 	"oncall-agent/internal/model/domain"
+	"oncall-agent/internal/model/request"
 	aiopstools "oncall-agent/internal/tools/aiops"
 )
 
@@ -18,9 +19,24 @@ const (
 	stepStatusSuccess = "success"
 	stepStatusFailed  = "failed"
 	stepStatusSkipped = "skipped"
+
+	AnalyzerModeRule  = "rule"
+	AnalyzerModeAgent = "agent"
 )
 
+type AIOpsAnalyzer interface {
+	Analyze(ctx context.Context, req request.AnalyzeRequest) (domain.AIOpsAnalyzeResult, error)
+}
+
 type AIOpsService struct {
+	analyzer       AIOpsAnalyzer
+	ruleAnalyzer   AIOpsAnalyzer
+	mode           string
+	fallbackToRule bool
+	log            *slog.Logger
+}
+
+type RuleBasedAnalyzer struct {
 	alertProvider  aiopstools.AlertProvider
 	logProvider    aiopstools.LogProvider
 	metricProvider aiopstools.MetricProvider
@@ -74,10 +90,48 @@ func NewAIOpsServiceFromConfig(cfg config.Config, log *slog.Logger, knowledge *K
 	if err != nil {
 		return nil, err
 	}
-	return NewAIOpsServiceWithProviders(log, providers.Alert, providers.Log, providers.Metric, knowledge, cfg.AIOps), nil
+	return NewAIOpsServiceWithProvidersFromConfig(log, providers.Alert, providers.Log, providers.Metric, knowledge, cfg)
 }
 
 func NewAIOpsServiceWithProviders(log *slog.Logger, alertProvider aiopstools.AlertProvider, logProvider aiopstools.LogProvider, metricProvider aiopstools.MetricProvider, knowledge *KnowledgeService, cfg config.AIOpsConfig) *AIOpsService {
+	fullCfg := *configForAIOps(cfg)
+	service, err := NewAIOpsServiceWithProvidersFromConfig(log, alertProvider, logProvider, metricProvider, knowledge, fullCfg)
+	if err != nil {
+		rule := NewRuleBasedAnalyzer(log, alertProvider, logProvider, metricProvider, knowledge, cfg)
+		return &AIOpsService{analyzer: rule, ruleAnalyzer: rule, mode: AnalyzerModeRule, fallbackToRule: true, log: rule.log}
+	}
+	return service
+}
+
+func NewAIOpsServiceWithProvidersFromConfig(log *slog.Logger, alertProvider aiopstools.AlertProvider, logProvider aiopstools.LogProvider, metricProvider aiopstools.MetricProvider, knowledge *KnowledgeService, cfg config.Config) (*AIOpsService, error) {
+	rule := NewRuleBasedAnalyzer(log, alertProvider, logProvider, metricProvider, knowledge, cfg.AIOps)
+	mode := normalizeAnalyzerMode(cfg.AIOps.Mode)
+	if mode == "" {
+		mode = AnalyzerModeRule
+	}
+	service := &AIOpsService{
+		analyzer:       rule,
+		ruleAnalyzer:   rule,
+		mode:           mode,
+		fallbackToRule: cfg.AIOps.FallbackToRule,
+		log:            rule.log,
+	}
+	switch mode {
+	case AnalyzerModeRule:
+		return service, nil
+	case AnalyzerModeAgent:
+		agent, err := NewEinoAgentAnalyzerFromConfig(rule.log, alertProvider, logProvider, metricProvider, knowledge, cfg)
+		if err != nil {
+			return nil, err
+		}
+		service.analyzer = agent
+		return service, nil
+	default:
+		return nil, fmt.Errorf("unsupported aiops mode %q", cfg.AIOps.Mode)
+	}
+}
+
+func NewRuleBasedAnalyzer(log *slog.Logger, alertProvider aiopstools.AlertProvider, logProvider aiopstools.LogProvider, metricProvider aiopstools.MetricProvider, knowledge *KnowledgeService, cfg config.AIOpsConfig) *RuleBasedAnalyzer {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -96,7 +150,7 @@ func NewAIOpsServiceWithProviders(log *slog.Logger, alertProvider aiopstools.Ale
 	if cfg.SOPTopK <= 0 {
 		cfg.SOPTopK = 3
 	}
-	return &AIOpsService{
+	return &RuleBasedAnalyzer{
 		alertProvider:  alertProvider,
 		logProvider:    logProvider,
 		metricProvider: metricProvider,
@@ -107,7 +161,79 @@ func NewAIOpsServiceWithProviders(log *slog.Logger, alertProvider aiopstools.Ale
 	}
 }
 
+func configForAIOps(aiopsCfg config.AIOpsConfig) *config.Config {
+	cfg := &config.Config{
+		AIOps: aiopsCfg,
+		LLM:   config.LLMConfig{Provider: "mock", Timeout: 30 * time.Second},
+	}
+	if cfg.AIOps.Mode == "" {
+		cfg.AIOps.Mode = AnalyzerModeRule
+	}
+	if cfg.AIOps.Agent.MaxSteps <= 0 {
+		cfg.AIOps.Agent.MaxSteps = 12
+	}
+	if cfg.AIOps.Agent.Timeout <= 0 {
+		cfg.AIOps.Agent.Timeout = 60 * time.Second
+	}
+	return cfg
+}
+
+func normalizeAnalyzerMode(mode string) string {
+	return strings.ToLower(strings.TrimSpace(mode))
+}
+
 func (s *AIOpsService) Analyze(ctx context.Context, alertName, service string) (domain.AIOpsAnalyzeResult, error) {
+	return s.AnalyzeRequest(ctx, request.AnalyzeRequest{AlertName: alertName, Service: service})
+}
+
+func (s *AIOpsService) AnalyzeRequest(ctx context.Context, req request.AnalyzeRequest) (domain.AIOpsAnalyzeResult, error) {
+	if s == nil || s.analyzer == nil {
+		return domain.AIOpsAnalyzeResult{}, fmt.Errorf("aiops analyzer is not configured")
+	}
+	result, err := s.analyzer.Analyze(ctx, req)
+	if err == nil {
+		if result.Mode == "" {
+			result.Mode = s.mode
+		}
+		return result, nil
+	}
+	if s.mode != AnalyzerModeAgent || !s.fallbackToRule || s.ruleAnalyzer == nil {
+		return domain.AIOpsAnalyzeResult{}, err
+	}
+
+	traceID := trace.FromContext(ctx)
+	if traceID == "" {
+		traceID = trace.NewID()
+		ctx = trace.WithTraceID(ctx, traceID)
+	}
+	s.log.ErrorContext(ctx, "aiops agent analyzer failed, fallback to rule",
+		"trace_id", traceID,
+		"error", err.Error(),
+	)
+	fallbackResult, fallbackErr := s.ruleAnalyzer.Analyze(ctx, req)
+	if fallbackErr != nil {
+		return domain.AIOpsAnalyzeResult{}, fmt.Errorf("agent analyzer failed: %w; rule fallback failed: %v", err, fallbackErr)
+	}
+	fallbackResult.FallbackUsed = true
+	fallbackResult.Mode = AnalyzerModeRule
+	fallbackResult.Steps = append([]domain.WorkflowStep{s.agentFallbackStep(ctx, err)}, fallbackResult.Steps...)
+	return fallbackResult, nil
+}
+
+func (s *AIOpsService) agentFallbackStep(ctx context.Context, err error) domain.WorkflowStep {
+	now := time.Now()
+	return domain.WorkflowStep{
+		Name:      "AgentAnalyzer",
+		Status:    stepStatusFailed,
+		Summary:   "agent 分析失败，已 fallback 到 rule workflow",
+		Error:     err.Error(),
+		StartedAt: now,
+		EndedAt:   now,
+		TraceID:   trace.FromContext(ctx),
+	}
+}
+
+func (s *RuleBasedAnalyzer) Analyze(ctx context.Context, req request.AnalyzeRequest) (domain.AIOpsAnalyzeResult, error) {
 	traceID := trace.FromContext(ctx)
 	if traceID == "" {
 		traceID = trace.NewID()
@@ -116,14 +242,14 @@ func (s *AIOpsService) Analyze(ctx context.Context, alertName, service string) (
 	workflowCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	result := domain.AIOpsAnalyzeResult{TraceID: traceID}
+	result := domain.AIOpsAnalyzeResult{TraceID: traceID, Mode: AnalyzerModeRule}
 	s.log.InfoContext(ctx, "aiops analyze requested",
 		"trace_id", traceID,
-		"service_name", service,
-		"alert_name", alertName,
+		"service_name", req.Service,
+		"alert_name", req.AlertName,
 	)
 
-	alerts, step := s.collectAlerts(workflowCtx, aiopstools.AlertFilter{AlertName: alertName, Service: service})
+	alerts, step := s.collectAlerts(workflowCtx, aiopstools.AlertFilter{AlertName: req.AlertName, Service: req.Service})
 	result.Steps = append(result.Steps, step)
 	result.Alerts = alerts
 	if step.Status == stepStatusFailed {
@@ -172,7 +298,7 @@ func (s *AIOpsService) Analyze(ctx context.Context, alertName, service string) (
 	return result, nil
 }
 
-func (s *AIOpsService) collectAlerts(ctx context.Context, filter aiopstools.AlertFilter) ([]domain.Alert, domain.WorkflowStep) {
+func (s *RuleBasedAnalyzer) collectAlerts(ctx context.Context, filter aiopstools.AlertFilter) ([]domain.Alert, domain.WorkflowStep) {
 	start := time.Now()
 	alerts, err := s.alertProvider.QueryActiveAlerts(ctx, filter)
 	if err != nil {
@@ -185,7 +311,7 @@ func (s *AIOpsService) collectAlerts(ctx context.Context, filter aiopstools.Aler
 	return alerts, s.step(ctx, "AlertCollector", stepStatusSuccess, summary, nil, start, time.Now(), alerts, nil)
 }
 
-func (s *AIOpsService) retrieveSOPs(ctx context.Context, alerts []domain.Alert) ([]domain.Citation, []domain.Evidence, domain.WorkflowStep) {
+func (s *RuleBasedAnalyzer) retrieveSOPs(ctx context.Context, alerts []domain.Alert) ([]domain.Citation, []domain.Evidence, domain.WorkflowStep) {
 	start := time.Now()
 	if s.knowledge == nil {
 		return nil, nil, s.step(ctx, "SOPRetriever", stepStatusSkipped, "KnowledgeService 未配置，跳过 SOP 检索", nil, start, time.Now(), alerts, nil)
@@ -224,7 +350,7 @@ func (s *AIOpsService) retrieveSOPs(ctx context.Context, alerts []domain.Alert) 
 	return citations, evidence, s.step(ctx, "SOPRetriever", stepStatusSuccess, summary, nil, start, time.Now(), alerts, evidence)
 }
 
-func (s *AIOpsService) planEvidence(ctx context.Context, alerts []domain.Alert) ([]evidencePlan, domain.WorkflowStep) {
+func (s *RuleBasedAnalyzer) planEvidence(ctx context.Context, alerts []domain.Alert) ([]evidencePlan, domain.WorkflowStep) {
 	start := time.Now()
 	plans := make([]evidencePlan, 0, len(alerts))
 	for _, alert := range alerts {
@@ -261,7 +387,7 @@ func (s *AIOpsService) planEvidence(ctx context.Context, alerts []domain.Alert) 
 	return plans, s.step(ctx, "EvidencePlanner", stepStatusSuccess, summary, nil, start, time.Now(), alerts, nil)
 }
 
-func (s *AIOpsService) collectEvidence(ctx context.Context, plans []evidencePlan) ([]domain.Evidence, domain.WorkflowStep) {
+func (s *RuleBasedAnalyzer) collectEvidence(ctx context.Context, plans []evidencePlan) ([]domain.Evidence, domain.WorkflowStep) {
 	start := time.Now()
 	evidence := make([]domain.Evidence, 0, len(plans)*2)
 	errorTexts := make([]string, 0)
@@ -297,7 +423,7 @@ func (s *AIOpsService) collectEvidence(ctx context.Context, plans []evidencePlan
 	return evidence, s.step(ctx, "EvidenceCollector", status, summary, err, start, time.Now(), nil, evidence)
 }
 
-func (s *AIOpsService) analyzeRootCause(ctx context.Context, evidence []domain.Evidence) (rootCauseAnalysis, domain.WorkflowStep) {
+func (s *RuleBasedAnalyzer) analyzeRootCause(ctx context.Context, evidence []domain.Evidence) (rootCauseAnalysis, domain.WorkflowStep) {
 	start := time.Now()
 	text := strings.ToLower(evidenceText(evidence))
 	analysis := rootCauseAnalysis{
@@ -324,7 +450,7 @@ func (s *AIOpsService) analyzeRootCause(ctx context.Context, evidence []domain.E
 	return analysis, s.step(ctx, "RootCauseAnalyzer", stepStatusSuccess, analysis.Cause, nil, start, time.Now(), nil, evidence)
 }
 
-func (s *AIOpsService) generateReport(alerts []domain.Alert, citations []domain.Citation, evidence []domain.Evidence, analysis rootCauseAnalysis) string {
+func (s *RuleBasedAnalyzer) generateReport(alerts []domain.Alert, citations []domain.Citation, evidence []domain.Evidence, analysis rootCauseAnalysis) string {
 	var b strings.Builder
 	b.WriteString("告警分析报告\n\n")
 	b.WriteString("一、活跃告警\n")
@@ -374,7 +500,7 @@ func (s *AIOpsService) generateReport(alerts []domain.Alert, citations []domain.
 	return b.String()
 }
 
-func (s *AIOpsService) skippedStep(ctx context.Context, name, summary string, alerts []domain.Alert, evidence []domain.Evidence, errText string) domain.WorkflowStep {
+func (s *RuleBasedAnalyzer) skippedStep(ctx context.Context, name, summary string, alerts []domain.Alert, evidence []domain.Evidence, errText string) domain.WorkflowStep {
 	start := time.Now()
 	var err error
 	if errText != "" {
@@ -383,12 +509,12 @@ func (s *AIOpsService) skippedStep(ctx context.Context, name, summary string, al
 	return s.step(ctx, name, stepStatusSkipped, summary, err, start, time.Now(), alerts, evidence)
 }
 
-func (s *AIOpsService) successStep(ctx context.Context, name, summary string, alerts []domain.Alert, evidence []domain.Evidence) domain.WorkflowStep {
+func (s *RuleBasedAnalyzer) successStep(ctx context.Context, name, summary string, alerts []domain.Alert, evidence []domain.Evidence) domain.WorkflowStep {
 	start := time.Now()
 	return s.step(ctx, name, stepStatusSuccess, summary, nil, start, time.Now(), alerts, evidence)
 }
 
-func (s *AIOpsService) step(ctx context.Context, name, status, summary string, err error, startedAt, endedAt time.Time, alerts []domain.Alert, evidence []domain.Evidence) domain.WorkflowStep {
+func (s *RuleBasedAnalyzer) step(ctx context.Context, name, status, summary string, err error, startedAt, endedAt time.Time, alerts []domain.Alert, evidence []domain.Evidence) domain.WorkflowStep {
 	step := domain.WorkflowStep{
 		Name:      name,
 		Status:    status,
@@ -411,7 +537,7 @@ func (s *AIOpsService) step(ctx context.Context, name, status, summary string, e
 	return step
 }
 
-func (s *AIOpsService) logProviderCall(ctx context.Context, providerName, querySummary string, resultCount int) {
+func (s *RuleBasedAnalyzer) logProviderCall(ctx context.Context, providerName, querySummary string, resultCount int) {
 	s.log.InfoContext(ctx, "aiops provider call completed",
 		"trace_id", trace.FromContext(ctx),
 		"provider_name", providerName,
@@ -420,7 +546,7 @@ func (s *AIOpsService) logProviderCall(ctx context.Context, providerName, queryS
 	)
 }
 
-func (s *AIOpsService) logProviderCallFailed(ctx context.Context, providerName, querySummary string, err error) {
+func (s *RuleBasedAnalyzer) logProviderCallFailed(ctx context.Context, providerName, querySummary string, err error) {
 	s.log.ErrorContext(ctx, "aiops provider call failed",
 		"trace_id", trace.FromContext(ctx),
 		"provider_name", providerName,

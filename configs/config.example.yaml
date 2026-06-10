@@ -16,11 +16,23 @@ knowledge:
     - .txt
 
 aiops:
+  mode: rule
+  fallback_to_rule: true
   alert_provider: mock
   log_provider: mock
   metric_provider: mock
+  agent:
+    max_steps: 12
+    timeout: 60s
   timeout: 10s
   sop_top_k: 3
+
+llm:
+  provider: mock
+  api_key: ${LLM_API_KEY}
+  base_url: ${LLM_BASE_URL}
+  model: ${LLM_MODEL}
+  timeout: 30s
 
 rag:
   chunk_size: 800

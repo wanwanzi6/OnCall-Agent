@@ -20,8 +20,17 @@ func TestLoadDefaultsAndEnvOverride(t *testing.T) {
 	t.Setenv("AIOPS_ALERT_PROVIDER", "prometheus")
 	t.Setenv("AIOPS_LOG_PROVIDER", "mock")
 	t.Setenv("AIOPS_METRIC_PROVIDER", "mock")
+	t.Setenv("AIOPS_MODE", "agent")
+	t.Setenv("AIOPS_FALLBACK_TO_RULE", "false")
+	t.Setenv("AIOPS_AGENT_MAX_STEPS", "8")
+	t.Setenv("AIOPS_AGENT_TIMEOUT", "45s")
 	t.Setenv("AIOPS_TIMEOUT", "7s")
 	t.Setenv("AIOPS_SOP_TOP_K", "4")
+	t.Setenv("LLM_PROVIDER", "openai-compatible")
+	t.Setenv("LLM_API_KEY", "llm-test-key")
+	t.Setenv("LLM_BASE_URL", "https://llm.local/v1")
+	t.Setenv("LLM_MODEL", "test-model")
+	t.Setenv("LLM_TIMEOUT", "9s")
 	t.Setenv("DASHSCOPE_API_KEY", "test-key")
 	t.Setenv("DASHSCOPE_EMBEDDING_MODEL", "text-embedding-v4")
 	t.Setenv("DASHSCOPE_EMBEDDING_DIM", "1024")
@@ -61,6 +70,12 @@ func TestLoadDefaultsAndEnvOverride(t *testing.T) {
 	if cfg.AIOps.AlertProvider != "prometheus" || cfg.AIOps.Timeout.String() != "7s" || cfg.AIOps.SOPTopK != 4 {
 		t.Fatalf("aiops config = %+v", cfg.AIOps)
 	}
+	if cfg.AIOps.Mode != "agent" || cfg.AIOps.FallbackToRule || cfg.AIOps.Agent.MaxSteps != 8 || cfg.AIOps.Agent.Timeout.String() != "45s" {
+		t.Fatalf("aiops agent config = %+v", cfg.AIOps)
+	}
+	if cfg.LLM.Provider != "openai-compatible" || cfg.LLM.APIKey != "llm-test-key" || cfg.LLM.BaseURL != "https://llm.local/v1" || cfg.LLM.Model != "test-model" || cfg.LLM.Timeout.String() != "9s" {
+		t.Fatalf("llm config = %+v", cfg.LLM)
+	}
 	if cfg.Embedding.DashScope.APIKey != "test-key" || cfg.Embedding.DashScope.Dimensions != 1024 {
 		t.Fatalf("dashscope config = %+v", cfg.Embedding.DashScope)
 	}
@@ -82,5 +97,8 @@ func TestLoadExampleConfigWithDurations(t *testing.T) {
 	}
 	if cfg.Embedding.DashScope.Timeout == 0 || cfg.Milvus.Timeout == 0 || cfg.AIOps.Timeout == 0 || cfg.Prometheus.Timeout == 0 {
 		t.Fatalf("timeouts should be parsed: embedding=%s milvus=%s aiops=%s prometheus=%s", cfg.Embedding.DashScope.Timeout, cfg.Milvus.Timeout, cfg.AIOps.Timeout, cfg.Prometheus.Timeout)
+	}
+	if cfg.AIOps.Mode != "rule" || !cfg.AIOps.FallbackToRule || cfg.AIOps.Agent.Timeout == 0 || cfg.LLM.Provider != "mock" || cfg.LLM.Timeout == 0 {
+		t.Fatalf("stage 5 defaults should be parsed: aiops=%+v llm=%+v", cfg.AIOps, cfg.LLM)
 	}
 }

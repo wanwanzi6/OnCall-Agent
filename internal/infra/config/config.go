@@ -15,6 +15,7 @@ type Config struct {
 	Mock       MockConfig       `yaml:"mock"`
 	Knowledge  KnowledgeConfig  `yaml:"knowledge"`
 	AIOps      AIOpsConfig      `yaml:"aiops"`
+	LLM        LLMConfig        `yaml:"llm"`
 	RAG        RAGConfig        `yaml:"rag"`
 	Embedding  EmbeddingConfig  `yaml:"embedding"`
 	Milvus     MilvusConfig     `yaml:"milvus"`
@@ -43,8 +44,24 @@ type AIOpsConfig struct {
 	AlertProvider  string        `yaml:"alert_provider"`
 	LogProvider    string        `yaml:"log_provider"`
 	MetricProvider string        `yaml:"metric_provider"`
+	Mode           string        `yaml:"mode"`
+	FallbackToRule bool          `yaml:"fallback_to_rule"`
+	Agent          AgentConfig   `yaml:"agent"`
 	Timeout        time.Duration `yaml:"timeout"`
 	SOPTopK        int           `yaml:"sop_top_k"`
+}
+
+type AgentConfig struct {
+	MaxSteps int           `yaml:"max_steps"`
+	Timeout  time.Duration `yaml:"timeout"`
+}
+
+type LLMConfig struct {
+	Provider string        `yaml:"provider"`
+	APIKey   string        `yaml:"api_key"`
+	BaseURL  string        `yaml:"base_url"`
+	Model    string        `yaml:"model"`
+	Timeout  time.Duration `yaml:"timeout"`
 }
 
 type RAGConfig struct {
@@ -111,8 +128,18 @@ func defaultConfig() *Config {
 			AlertProvider:  "mock",
 			LogProvider:    "mock",
 			MetricProvider: "mock",
-			Timeout:        10 * time.Second,
-			SOPTopK:        3,
+			Mode:           "rule",
+			FallbackToRule: true,
+			Agent: AgentConfig{
+				MaxSteps: 12,
+				Timeout:  60 * time.Second,
+			},
+			Timeout: 10 * time.Second,
+			SOPTopK: 3,
+		},
+		LLM: LLMConfig{
+			Provider: "mock",
+			Timeout:  30 * time.Second,
 		},
 		RAG: RAGConfig{
 			ChunkSize:           800,
@@ -200,6 +227,24 @@ func applyEnv(cfg *Config) {
 	if provider := os.Getenv("AIOPS_METRIC_PROVIDER"); provider != "" {
 		cfg.AIOps.MetricProvider = provider
 	}
+	if mode := os.Getenv("AIOPS_MODE"); mode != "" {
+		cfg.AIOps.Mode = mode
+	}
+	if fallback := os.Getenv("AIOPS_FALLBACK_TO_RULE"); fallback != "" {
+		if parsed, err := strconv.ParseBool(fallback); err == nil {
+			cfg.AIOps.FallbackToRule = parsed
+		}
+	}
+	if maxSteps := os.Getenv("AIOPS_AGENT_MAX_STEPS"); maxSteps != "" {
+		if parsed, err := strconv.Atoi(maxSteps); err == nil {
+			cfg.AIOps.Agent.MaxSteps = parsed
+		}
+	}
+	if timeout := os.Getenv("AIOPS_AGENT_TIMEOUT"); timeout != "" {
+		if parsed, err := time.ParseDuration(timeout); err == nil {
+			cfg.AIOps.Agent.Timeout = parsed
+		}
+	}
 	if timeout := os.Getenv("AIOPS_TIMEOUT"); timeout != "" {
 		if parsed, err := time.ParseDuration(timeout); err == nil {
 			cfg.AIOps.Timeout = parsed
@@ -208,6 +253,23 @@ func applyEnv(cfg *Config) {
 	if topK := os.Getenv("AIOPS_SOP_TOP_K"); topK != "" {
 		if parsed, err := strconv.Atoi(topK); err == nil {
 			cfg.AIOps.SOPTopK = parsed
+		}
+	}
+	if provider := os.Getenv("LLM_PROVIDER"); provider != "" {
+		cfg.LLM.Provider = provider
+	}
+	if apiKey := os.Getenv("LLM_API_KEY"); apiKey != "" {
+		cfg.LLM.APIKey = apiKey
+	}
+	if baseURL := os.Getenv("LLM_BASE_URL"); baseURL != "" {
+		cfg.LLM.BaseURL = baseURL
+	}
+	if model := os.Getenv("LLM_MODEL"); model != "" {
+		cfg.LLM.Model = model
+	}
+	if timeout := os.Getenv("LLM_TIMEOUT"); timeout != "" {
+		if parsed, err := time.ParseDuration(timeout); err == nil {
+			cfg.LLM.Timeout = parsed
 		}
 	}
 	if apiKey := os.Getenv("DASHSCOPE_API_KEY"); apiKey != "" {

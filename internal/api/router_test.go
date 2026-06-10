@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"oncall-agent/internal/infra/config"
 	"oncall-agent/internal/infra/trace"
@@ -89,9 +90,46 @@ func TestAIOpsAnalyzeResponseContainsWorkflowFields(t *testing.T) {
 	}
 }
 
+func TestAIOpsAnalyzeAgentFallbackResponseContainsTraceAndFallbackInfo(t *testing.T) {
+	cfg := testRouterConfig(t)
+	cfg.AIOps.Mode = service.AnalyzerModeAgent
+	cfg.AIOps.FallbackToRule = true
+	cfg.AIOps.Agent = config.AgentConfig{MaxSteps: 1, Timeout: 5 * time.Second}
+	router := testRouterWithConfig(t, cfg)
+	req := httptest.NewRequest(http.MethodPost, "/api/aiops/analyze", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(trace.HeaderName, "trace-api-fallback")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var body response.APIResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	data, ok := body.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("data = %T, want object", body.Data)
+	}
+	if data["trace_id"] != "trace-api-fallback" {
+		t.Fatalf("data trace_id = %v", data["trace_id"])
+	}
+	if data["fallback_used"] != true {
+		t.Fatalf("fallback_used = %v, want true", data["fallback_used"])
+	}
+}
+
 func testRouter(t *testing.T) http.Handler {
 	t.Helper()
-	cfg := &config.Config{
+	return testRouterWithConfig(t, testRouterConfig(t))
+}
+
+func testRouterConfig(t *testing.T) *config.Config {
+	t.Helper()
+	return &config.Config{
 		Server: config.ServerConfig{Port: 8080},
 		App:    config.AppConfig{Env: "test"},
 		Mock:   config.MockConfig{Enabled: true},
@@ -105,8 +143,18 @@ func testRouter(t *testing.T) http.Handler {
 			AlertProvider:  "mock",
 			LogProvider:    "mock",
 			MetricProvider: "mock",
+			Mode:           service.AnalyzerModeRule,
+			FallbackToRule: true,
+			Agent:          config.AgentConfig{MaxSteps: 12, Timeout: 60 * time.Second},
+			Timeout:        10 * time.Second,
+			SOPTopK:        3,
 		},
+		LLM: config.LLMConfig{Provider: "mock", Timeout: 30 * time.Second},
 	}
+}
+
+func testRouterWithConfig(t *testing.T, cfg *config.Config) http.Handler {
+	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	knowledgeService := service.NewKnowledgeService(true, cfg.Knowledge, cfg.RAG, log)
 	services := Services{

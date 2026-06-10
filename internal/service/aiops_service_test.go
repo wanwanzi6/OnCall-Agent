@@ -12,6 +12,7 @@ import (
 	"oncall-agent/internal/infra/config"
 	"oncall-agent/internal/infra/trace"
 	"oncall-agent/internal/model/domain"
+	"oncall-agent/internal/model/request"
 	aiopstools "oncall-agent/internal/tools/aiops"
 )
 
@@ -94,6 +95,102 @@ func TestAIOpsAnalyzeNoActiveAlerts(t *testing.T) {
 	}
 }
 
+func TestAIOpsAnalyzerSelectionDefaultsToRule(t *testing.T) {
+	cfg := testAIOpsConfig()
+	cfg.AIOps.Mode = ""
+	svc, err := NewAIOpsServiceWithProvidersFromConfig(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		aiopstools.NewMockAlertProvider(),
+		aiopstools.NewMockLogProvider(),
+		aiopstools.NewMockMetricProvider(),
+		nil,
+		cfg,
+	)
+	if err != nil {
+		t.Fatalf("NewAIOpsServiceWithProvidersFromConfig returned error: %v", err)
+	}
+	result, err := svc.Analyze(trace.WithTraceID(context.Background(), "trace-rule-mode"), "", "")
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if result.Mode != AnalyzerModeRule || result.FallbackUsed {
+		t.Fatalf("mode=%q fallback=%v, want rule false", result.Mode, result.FallbackUsed)
+	}
+}
+
+func TestAIOpsAnalyzerSelectionAgentMode(t *testing.T) {
+	cfg := testAIOpsConfig()
+	cfg.AIOps.Mode = AnalyzerModeAgent
+	svc, err := NewAIOpsServiceWithProvidersFromConfig(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		aiopstools.NewMockAlertProvider(),
+		aiopstools.NewMockLogProvider(),
+		aiopstools.NewMockMetricProvider(),
+		nil,
+		cfg,
+	)
+	if err != nil {
+		t.Fatalf("NewAIOpsServiceWithProvidersFromConfig returned error: %v", err)
+	}
+	result, err := svc.Analyze(trace.WithTraceID(context.Background(), "trace-agent-mode"), "", "")
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if result.Mode != AnalyzerModeAgent || result.FallbackUsed {
+		t.Fatalf("mode=%q fallback=%v, want agent false", result.Mode, result.FallbackUsed)
+	}
+	if len(result.Steps) == 0 || !strings.HasPrefix(result.Steps[0].Name, "AgentTool:") {
+		t.Fatalf("expected agent tool steps: %+v", result.Steps)
+	}
+	if result.Report == "" || len(result.Alerts) == 0 {
+		t.Fatalf("expected agent report and alerts: %+v", result)
+	}
+}
+
+func TestAIOpsAnalyzerSelectionInvalidMode(t *testing.T) {
+	cfg := testAIOpsConfig()
+	cfg.AIOps.Mode = "invalid"
+	_, err := NewAIOpsServiceWithProvidersFromConfig(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		aiopstools.NewMockAlertProvider(),
+		aiopstools.NewMockLogProvider(),
+		aiopstools.NewMockMetricProvider(),
+		nil,
+		cfg,
+	)
+	if err == nil {
+		t.Fatal("expected invalid mode error")
+	}
+}
+
+func TestAIOpsAgentFailureFallbackToRule(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	rule := NewRuleBasedAnalyzer(log, aiopstools.NewMockAlertProvider(), aiopstools.NewMockLogProvider(), aiopstools.NewMockMetricProvider(), nil, config.AIOpsConfig{Timeout: 5 * time.Second, SOPTopK: 3})
+	svc := &AIOpsService{analyzer: failingAnalyzer{}, ruleAnalyzer: rule, mode: AnalyzerModeAgent, fallbackToRule: true, log: log}
+
+	result, err := svc.Analyze(trace.WithTraceID(context.Background(), "trace-fallback"), "", "")
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if !result.FallbackUsed || result.Mode != AnalyzerModeRule {
+		t.Fatalf("mode=%q fallback=%v, want rule true", result.Mode, result.FallbackUsed)
+	}
+	if len(result.Steps) == 0 || result.Steps[0].Name != "AgentAnalyzer" || result.Steps[0].Error == "" {
+		t.Fatalf("fallback step missing original error: %+v", result.Steps)
+	}
+}
+
+func TestAIOpsAgentFailureWithoutFallbackReturnsError(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	rule := NewRuleBasedAnalyzer(log, aiopstools.NewMockAlertProvider(), aiopstools.NewMockLogProvider(), aiopstools.NewMockMetricProvider(), nil, config.AIOpsConfig{Timeout: 5 * time.Second, SOPTopK: 3})
+	svc := &AIOpsService{analyzer: failingAnalyzer{}, ruleAnalyzer: rule, mode: AnalyzerModeAgent, fallbackToRule: false, log: log}
+
+	_, err := svc.Analyze(trace.WithTraceID(context.Background(), "trace-no-fallback"), "", "")
+	if err == nil {
+		t.Fatal("expected agent error without fallback")
+	}
+}
+
 func newTestAIOpsService(knowledge *KnowledgeService, alertProvider aiopstools.AlertProvider, logProvider aiopstools.LogProvider, metricProvider aiopstools.MetricProvider) *AIOpsService {
 	return NewAIOpsServiceWithProviders(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -103,6 +200,21 @@ func newTestAIOpsService(knowledge *KnowledgeService, alertProvider aiopstools.A
 		knowledge,
 		config.AIOpsConfig{Timeout: 5 * time.Second, SOPTopK: 3},
 	)
+}
+
+func testAIOpsConfig() config.Config {
+	return config.Config{
+		AIOps: config.AIOpsConfig{
+			AlertProvider:  "mock",
+			LogProvider:    "mock",
+			MetricProvider: "mock",
+			FallbackToRule: true,
+			Agent:          config.AgentConfig{MaxSteps: 12, Timeout: 30 * time.Second},
+			Timeout:        5 * time.Second,
+			SOPTopK:        3,
+		},
+		LLM: config.LLMConfig{Provider: "mock", Timeout: 5 * time.Second},
+	}
 }
 
 func assertStepNames(t *testing.T, steps []domain.WorkflowStep) {
@@ -146,4 +258,10 @@ type emptyAlertProvider struct{}
 
 func (e emptyAlertProvider) QueryActiveAlerts(context.Context, aiopstools.AlertFilter) ([]domain.Alert, error) {
 	return nil, nil
+}
+
+type failingAnalyzer struct{}
+
+func (f failingAnalyzer) Analyze(context.Context, request.AnalyzeRequest) (domain.AIOpsAnalyzeResult, error) {
+	return domain.AIOpsAnalyzeResult{}, errors.New("agent runner failed")
 }
