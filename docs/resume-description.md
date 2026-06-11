@@ -4,6 +4,31 @@
 
 基于 Go + Eino + Milvus + React 构建智能 Oncall 助手，支持 SOP 知识库 RAG 问答、告警自动分析、日志/指标证据收集、Eino Agent 工具调用和结构化故障报告生成。
 
+## 量化简历版
+
+智能 Oncall/AIOps 故障分析助手 | Go, Gin, React, TypeScript, RAG, Eino, Milvus
+
+- 从 0 重构智能 Oncall 助手，围绕“告警理解 -> SOP 检索 -> 日志/指标取证 -> 根因分析 -> 报告生成”构建 6 步排障闭环。
+- 设计 SOP 知识库 RAG 链路，支持文档上传、切片、Embedding、向量检索和 citation 返回；在 8 条自建排障 QA demo 评测集上，RAG Recall@3 达到 100%，MRR@3 为 0.708。
+- 实现 rule workflow 与 Agent workflow 双模式告警分析，默认使用确定性 rule 链路保证演示稳定性，Agent 失败时支持 fallback 到 rule workflow。
+- 封装查询活跃告警、检索内部文档、查询日志、查询指标、获取当前时间 5 个只读 Agent 工具，并限制自动修复、命令执行、关闭告警等高风险操作。
+- 抽象告警、日志、指标 3 类 Provider，默认使用 mock provider 保证离线 demo 可复现，并预留 Prometheus 等真实监控系统接入能力。
+- 在 demo 服务下线场景中，AI Ops 工作流 6/6 步骤成功执行，自动收集 5 条证据、3 条 SOP citation，并生成包含 panic、restart_count 和服务下线根因信号的结构化报告。
+- 补齐 61 个核心测试用例，覆盖 RAG、配置解析、上传校验、API 响应、Agent 工具、fallback 等关键路径；`go test ./...` 和前端生产构建均可通过。
+
+## 效果指标口径
+
+当前效果数字来自 `scripts/evaluate_demo.go` 的本地 demo 评测：
+
+- RAG Recall@1：50.0%（4/8）
+- RAG Recall@3：100.0%（8/8）
+- RAG MRR@3：0.708
+- AI Ops 工作流成功率：6/6
+- AI Ops 证据数：5
+- AI Ops citation 数：3
+
+这些数字适合在简历中写成“自建 demo 评测集”或“排障 demo 场景”，不建议写成生产准确率。
+
 ## 亮点版
 
 - 设计 RAG 知识库模块，支持文档上传、切片、向量检索和引用来源返回。
