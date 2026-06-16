@@ -145,6 +145,9 @@ func TestAIOpsAnalyzerSelectionAgentMode(t *testing.T) {
 	if result.Report == "" || len(result.Alerts) == 0 {
 		t.Fatalf("expected agent report and alerts: %+v", result)
 	}
+	if result.Plan == nil || len(result.Iterations) == 0 || result.ReplanReason == "" {
+		t.Fatalf("expected aiops agent plan-execute-replan trace: %+v", result)
+	}
 }
 
 func TestAIOpsAnalyzerSelectionInvalidMode(t *testing.T) {

@@ -32,10 +32,22 @@ type IndexResult struct {
 }
 
 type UploadResult struct {
-	FileName   string   `json:"file_name"`
-	FileType   string   `json:"file_type"`
-	ChunkCount int      `json:"chunk_count"`
-	DocID      string   `json:"doc_id"`
-	NextSteps  []string `json:"next_steps"`
-	Mock       bool     `json:"mock"`
+	TraceID    string           `json:"trace_id,omitempty"`
+	FileName   string           `json:"file_name"`
+	FileType   string           `json:"file_type"`
+	ChunkCount int              `json:"chunk_count"`
+	DocID      string           `json:"doc_id"`
+	NextSteps  []string         `json:"next_steps"`
+	Mock       bool             `json:"mock"`
+	Plan       *AgentPlan       `json:"plan,omitempty"`
+	Iterations []AgentIteration `json:"iterations,omitempty"`
+	Steps      []WorkflowStep   `json:"steps,omitempty"`
+}
+
+type KnowledgeSearchResult struct {
+	TraceID    string           `json:"trace_id,omitempty"`
+	Results    []SearchResult   `json:"results"`
+	Plan       *AgentPlan       `json:"plan,omitempty"`
+	Iterations []AgentIteration `json:"iterations,omitempty"`
+	Steps      []WorkflowStep   `json:"steps,omitempty"`
 }

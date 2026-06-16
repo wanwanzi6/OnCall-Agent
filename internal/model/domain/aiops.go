@@ -53,14 +53,17 @@ type WorkflowStep struct {
 }
 
 type AIOpsAnalyzeResult struct {
-	TraceID      string         `json:"trace_id"`
-	Report       string         `json:"report"`
-	Alerts       []Alert        `json:"alerts"`
-	Steps        []WorkflowStep `json:"steps"`
-	Evidence     []Evidence     `json:"evidence"`
-	Citations    []Citation     `json:"citations"`
-	Mode         string         `json:"mode,omitempty"`
-	FallbackUsed bool           `json:"fallback_used,omitempty"`
+	TraceID      string           `json:"trace_id"`
+	Report       string           `json:"report"`
+	Alerts       []Alert          `json:"alerts"`
+	Steps        []WorkflowStep   `json:"steps"`
+	Evidence     []Evidence       `json:"evidence"`
+	Citations    []Citation       `json:"citations"`
+	Mode         string           `json:"mode,omitempty"`
+	FallbackUsed bool             `json:"fallback_used,omitempty"`
+	Plan         *AgentPlan       `json:"plan,omitempty"`
+	Iterations   []AgentIteration `json:"iterations,omitempty"`
+	ReplanReason string           `json:"replan_reason,omitempty"`
 }
 
 type AnalyzeReport struct {

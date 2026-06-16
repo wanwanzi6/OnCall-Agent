@@ -33,6 +33,13 @@ func TestKnowledgeServiceIndexSearchAndDelete(t *testing.T) {
 	if results[0].Chunk.DocumentID != index.DocumentID {
 		t.Fatalf("document id = %q, want %q", results[0].Chunk.DocumentID, index.DocumentID)
 	}
+	traced, err := svc.SearchWithTrace(context.Background(), "服务下线 panic 日志", 3)
+	if err != nil {
+		t.Fatalf("SearchWithTrace returned error: %v", err)
+	}
+	if traced.Plan == nil || len(traced.Iterations) == 0 || len(traced.Steps) == 0 || len(traced.Results) == 0 {
+		t.Fatalf("expected rag agent trace: %+v", traced)
+	}
 
 	if err := svc.DeleteDocument(context.Background(), index.DocumentID); err != nil {
 		t.Fatalf("DeleteDocument returned error: %v", err)

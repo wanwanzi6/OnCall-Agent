@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"strings"
 
+	"oncall-agent/internal/infra/config"
 	"oncall-agent/internal/infra/trace"
+	"oncall-agent/internal/llm"
 	"oncall-agent/internal/model/domain"
 )
 
@@ -13,60 +15,31 @@ type ChatService struct {
 	mockEnabled      bool
 	log              *slog.Logger
 	knowledgeService *KnowledgeService
+	agent            *ChatAgent
 }
 
-func NewChatService(mockEnabled bool, log *slog.Logger, knowledgeService *KnowledgeService) *ChatService {
+func NewChatService(mockEnabled bool, log *slog.Logger, knowledgeService *KnowledgeService, llmCfg ...config.LLMConfig) *ChatService {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &ChatService{mockEnabled: mockEnabled, log: log, knowledgeService: knowledgeService}
+	cfg := config.LLMConfig{Provider: llm.ProviderMock}
+	if len(llmCfg) > 0 {
+		cfg = llmCfg[0]
+	}
+	model, err := llm.NewEinoToolCallingModel(cfg)
+	if err != nil {
+		log.Error("initialize chat agent model failed, fallback to mock", "error", err.Error())
+		model, _ = llm.NewEinoToolCallingModel(config.LLMConfig{Provider: llm.ProviderMock})
+	}
+	return &ChatService{mockEnabled: mockEnabled, log: log, knowledgeService: knowledgeService, agent: NewChatAgent(model, knowledgeService, log)}
 }
 
 func (s *ChatService) Chat(ctx context.Context, message string) (domain.ChatResult, error) {
 	s.log.InfoContext(ctx, "chat requested", "trace_id", trace.FromContext(ctx), "service_name", "chat")
-	if s.knowledgeService == nil {
-		return domain.ChatResult{
-			Answer:  "知识库中没有检索到相关内容，请先上传对应 SOP 文档。",
-			Sources: []string{},
-			Mock:    s.mockEnabled,
-		}, nil
+	if s.agent == nil {
+		return domain.ChatResult{}, nil
 	}
-
-	results, err := s.knowledgeService.Search(ctx, message, 3)
-	if err != nil {
-		return domain.ChatResult{}, err
-	}
-	if len(results) == 0 {
-		return domain.ChatResult{
-			Answer:    "知识库中没有检索到相关内容，请先上传对应 SOP 文档。",
-			Sources:   []string{},
-			Citations: []domain.Citation{},
-			Mock:      s.mockEnabled,
-		}, nil
-	}
-
-	citations := make([]domain.Citation, 0, len(results))
-	sources := make([]string, 0, len(results))
-	for _, result := range results {
-		citations = append(citations, domain.Citation{
-			ChunkID:    result.Chunk.ID,
-			DocumentID: result.Chunk.DocumentID,
-			Source:     result.Source,
-			Score:      result.Score,
-			Content:    result.Chunk.Content,
-		})
-		if result.Source != "" {
-			sources = append(sources, result.Source)
-		}
-	}
-
-	answer := buildMockRAGAnswer(results[0])
-	return domain.ChatResult{
-		Answer:    answer,
-		Sources:   sources,
-		Citations: citations,
-		Mock:      s.mockEnabled,
-	}, nil
+	return s.agent.Chat(ctx, message, s.mockEnabled)
 }
 
 func (s *ChatService) StreamChat(ctx context.Context, message string) ([]domain.StreamChunk, error) {

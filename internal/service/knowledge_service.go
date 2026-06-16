@@ -30,6 +30,7 @@ type KnowledgeService struct {
 	splitter            rag.Splitter
 	embedder            rag.Embedder
 	vectorStore         rag.VectorStore
+	ragAgent            *RAGAgent
 	defaultTopK         int
 	embedderProvider    string
 	vectorStoreProvider string
@@ -41,7 +42,7 @@ func NewKnowledgeService(mockEnabled bool, cfg config.KnowledgeConfig, ragCfg co
 	if log == nil {
 		log = slog.Default()
 	}
-	return &KnowledgeService{
+	service := &KnowledgeService{
 		mockEnabled: mockEnabled,
 		policy: upload.Policy{
 			UploadDir:        cfg.UploadDir,
@@ -58,6 +59,8 @@ func NewKnowledgeService(mockEnabled bool, cfg config.KnowledgeConfig, ragCfg co
 		vectorStoreProvider: rag.VectorStoreProviderMemory,
 		documents:           make(map[string]domain.Document),
 	}
+	service.refreshRAGAgent()
+	return service
 }
 
 func NewKnowledgeServiceFromConfig(ctx context.Context, cfg *config.Config, log *slog.Logger) (*KnowledgeService, error) {
@@ -80,6 +83,7 @@ func NewKnowledgeServiceFromConfig(ctx context.Context, cfg *config.Config, log 
 	service.vectorStore = vectorStore
 	service.embedderProvider = cfg.RAG.EmbedderProvider
 	service.vectorStoreProvider = cfg.RAG.VectorStoreProvider
+	service.refreshRAGAgent()
 	log.InfoContext(ctx, "knowledge service initialized",
 		"trace_id", trace.FromContext(ctx),
 		"service_name", "knowledge",
@@ -148,10 +152,11 @@ func (s *KnowledgeService) SaveUpload(ctx context.Context, header *multipart.Fil
 		return domain.UploadResult{}, err
 	}
 
-	indexResult, err := s.IndexFile(ctx, target)
+	indexResult, doc, plan, iterations, steps, err := s.indexFileWithTrace(ctx, target)
 	if err != nil {
 		return domain.UploadResult{}, err
 	}
+	s.storeIndexedDocument(doc)
 
 	s.log.InfoContext(ctx, "upload saved and indexed",
 		"trace_id", trace.FromContext(ctx),
@@ -164,13 +169,17 @@ func (s *KnowledgeService) SaveUpload(ctx context.Context, header *multipart.Fil
 	result := s.uploadResult(sanitized, written)
 	result.DocID = indexResult.DocumentID
 	result.ChunkCount = indexResult.ChunkCount
+	result.TraceID = trace.FromContext(ctx)
+	result.Plan = plan
+	result.Iterations = iterations
+	result.Steps = steps
 	return result, nil
 }
 
 func (s *KnowledgeService) IndexFile(ctx context.Context, filePath string) (domain.IndexResult, error) {
-	doc, err := s.loader.Load(ctx, filePath)
+	result, doc, _, _, _, err := s.indexFileWithTrace(ctx, filePath)
 	if err != nil {
-		s.log.ErrorContext(ctx, "document load failed",
+		s.log.ErrorContext(ctx, "document index failed",
 			"trace_id", trace.FromContext(ctx),
 			"service_name", "knowledge",
 			"file_path", filePath,
@@ -178,28 +187,7 @@ func (s *KnowledgeService) IndexFile(ctx context.Context, filePath string) (doma
 		)
 		return domain.IndexResult{}, err
 	}
-	chunks, err := s.splitter.Split(ctx, doc)
-	if err != nil {
-		return domain.IndexResult{}, err
-	}
-	texts := make([]string, 0, len(chunks))
-	for _, chunk := range chunks {
-		texts = append(texts, chunk.Content)
-	}
-	vectors, err := s.embedder.EmbedDocuments(ctx, texts)
-	if err != nil {
-		return domain.IndexResult{}, err
-	}
-	if err := s.vectorStore.Upsert(ctx, chunks, vectors); err != nil {
-		return domain.IndexResult{}, err
-	}
-
-	s.mu.Lock()
-	doc.Content = ""
-	s.documents[doc.ID] = doc
-	s.mu.Unlock()
-
-	result := domain.IndexResult{DocumentID: doc.ID, ChunkCount: len(chunks)}
+	s.storeIndexedDocument(doc)
 	s.log.InfoContext(ctx, "document indexed",
 		"trace_id", trace.FromContext(ctx),
 		"service_name", "knowledge",
@@ -210,35 +198,25 @@ func (s *KnowledgeService) IndexFile(ctx context.Context, filePath string) (doma
 }
 
 func (s *KnowledgeService) Search(ctx context.Context, query string, topK int) ([]domain.SearchResult, error) {
-	if strings.TrimSpace(query) == "" {
-		return nil, fmt.Errorf("query is required")
-	}
-	if topK <= 0 {
-		topK = s.defaultTopK
-	}
-	vector, err := s.embedder.EmbedQuery(ctx, query)
+	searchResult, err := s.SearchWithTrace(ctx, query, topK)
 	if err != nil {
 		return nil, err
 	}
-	results, err := s.vectorStore.Search(ctx, vector, topK)
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]domain.SearchResult, 0, len(results))
-	for _, result := range results {
-		if result.Score > 0 {
-			filtered = append(filtered, result)
-		}
-	}
-
 	s.log.InfoContext(ctx, "knowledge searched",
 		"trace_id", trace.FromContext(ctx),
 		"service_name", "knowledge",
 		"query", query,
 		"top_k", topK,
-		"result_count", len(filtered),
+		"result_count", len(searchResult.Results),
 	)
-	return filtered, nil
+	return searchResult.Results, nil
+}
+
+func (s *KnowledgeService) SearchWithTrace(ctx context.Context, query string, topK int) (domain.KnowledgeSearchResult, error) {
+	if s.ragAgent == nil {
+		s.refreshRAGAgent()
+	}
+	return s.ragAgent.Search(ctx, query, topK)
 }
 
 func (s *KnowledgeService) ListDocuments(ctx context.Context) ([]domain.Document, error) {
@@ -285,4 +263,22 @@ func (s *KnowledgeService) uploadResult(fileName string, size int64) domain.Uplo
 		NextSteps:  []string{"loader", "splitter", "embedder", "indexer"},
 		Mock:       s.mockEnabled,
 	}
+}
+
+func (s *KnowledgeService) refreshRAGAgent() {
+	s.ragAgent = NewRAGAgent(s.log, s.loader, s.splitter, s.embedder, s.vectorStore, s.defaultTopK)
+}
+
+func (s *KnowledgeService) indexFileWithTrace(ctx context.Context, filePath string) (domain.IndexResult, domain.Document, *domain.AgentPlan, []domain.AgentIteration, []domain.WorkflowStep, error) {
+	if s.ragAgent == nil {
+		s.refreshRAGAgent()
+	}
+	return s.ragAgent.IndexFile(ctx, filePath)
+}
+
+func (s *KnowledgeService) storeIndexedDocument(doc domain.Document) {
+	s.mu.Lock()
+	doc.Content = ""
+	s.documents[doc.ID] = doc
+	s.mu.Unlock()
 }

@@ -1,4 +1,4 @@
-import type { Citation } from './rag';
+import type { AgentIteration, AgentPlan, Citation } from './rag';
 
 export type Alert = {
   id?: string;
@@ -43,6 +43,9 @@ export type AIOpsAnalyzeResult = {
   citations: Citation[];
   mode?: string;
   fallback_used?: boolean;
+  plan?: AgentPlan;
+  iterations?: AgentIteration[];
+  replan_reason?: string;
 };
 
 export type AIOpsAnalyzeRequest = {

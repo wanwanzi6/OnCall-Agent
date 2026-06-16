@@ -1,10 +1,14 @@
 package domain
 
 type ChatResult struct {
-	Answer    string     `json:"answer"`
-	Sources   []string   `json:"sources"`
-	Citations []Citation `json:"citations,omitempty"`
-	Mock      bool       `json:"mock"`
+	TraceID    string           `json:"trace_id,omitempty"`
+	Answer     string           `json:"answer"`
+	Sources    []string         `json:"sources"`
+	Citations  []Citation       `json:"citations,omitempty"`
+	Mock       bool             `json:"mock"`
+	Plan       *AgentPlan       `json:"plan,omitempty"`
+	Iterations []AgentIteration `json:"iterations,omitempty"`
+	Steps      []WorkflowStep   `json:"steps,omitempty"`
 }
 
 type Citation struct {

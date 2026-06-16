@@ -46,12 +46,12 @@ func Register(router *gin.RouterGroup, knowledgeService *service.KnowledgeServic
 			response.BadRequest(c, "query is required")
 			return
 		}
-		results, err := knowledgeService.Search(c.Request.Context(), req.Query, req.TopK)
+		result, err := knowledgeService.SearchWithTrace(c.Request.Context(), req.Query, req.TopK)
 		if err != nil {
 			response.BadRequest(c, err.Error())
 			return
 		}
-		response.OK(c, gin.H{"results": results})
+		response.OK(c, result)
 	})
 
 	router.GET("/knowledge/documents", func(c *gin.Context) {

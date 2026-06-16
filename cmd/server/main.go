@@ -34,7 +34,7 @@ func run() error {
 	}
 
 	services := api.Services{
-		Chat:      service.NewChatService(cfg.Mock.Enabled, log, knowledgeService),
+		Chat:      service.NewChatService(cfg.Mock.Enabled, log, knowledgeService, cfg.LLM),
 		Knowledge: knowledgeService,
 		AIOps:     aiopsService,
 	}

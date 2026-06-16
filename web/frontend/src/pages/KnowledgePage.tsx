@@ -1,11 +1,12 @@
 import { RefreshCw, Search, Trash2, Upload } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { deleteDocument, listDocuments, searchKnowledge, uploadKnowledgeFile, validateUploadFile } from '../api/knowledge';
+import { AgentTracePanel } from '../components/AgentTracePanel';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { PageHeader } from '../components/PageHeader';
 import { TraceId } from '../components/TraceId';
-import type { DocumentItem, SearchResult } from '../types/rag';
+import type { AgentIteration, AgentPlan, DocumentItem, SearchResult, WorkflowStep } from '../types/rag';
 import { compactText, formatDate } from '../utils/format';
 
 export function KnowledgePage() {
@@ -16,6 +17,7 @@ export function KnowledgePage() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [traceId, setTraceId] = useState<string | undefined>();
+  const [agentTrace, setAgentTrace] = useState<{ plan?: AgentPlan; iterations?: AgentIteration[]; steps?: WorkflowStep[] }>({});
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
@@ -47,7 +49,8 @@ export function KnowledgePage() {
     setUploading(true);
     try {
       const response = await uploadKnowledgeFile(file);
-      setTraceId(response.traceId);
+      setTraceId(response.data.trace_id || response.traceId);
+      setAgentTrace({ plan: response.data.plan, iterations: response.data.iterations, steps: response.data.steps });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err : new Error('upload failed'));
@@ -73,8 +76,9 @@ export function KnowledgePage() {
     setLoading(true);
     try {
       const response = await searchKnowledge(query, topK);
-      setResults(response.data);
-      setTraceId(response.traceId);
+      setResults(response.data.results);
+      setTraceId(response.data.trace_id || response.traceId);
+      setAgentTrace({ plan: response.data.plan, iterations: response.data.iterations, steps: response.data.steps });
     } catch (err) {
       setError(err instanceof Error ? err : new Error('search failed'));
     } finally {
@@ -125,6 +129,13 @@ export function KnowledgePage() {
             </button>
           </div>
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-title">
+          <h2>Agent Trace</h2>
+        </div>
+        <AgentTracePanel plan={agentTrace.plan} iterations={agentTrace.iterations} steps={agentTrace.steps} />
       </section>
 
       <section className="panel">

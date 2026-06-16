@@ -22,6 +22,9 @@ func TestChatServiceReturnsCitationsWhenKnowledgeMatches(t *testing.T) {
 	if len(result.Citations) == 0 {
 		t.Fatal("expected citations")
 	}
+	if result.Plan == nil || len(result.Iterations) == 0 || len(result.Steps) == 0 {
+		t.Fatalf("expected chat agent trace: %+v", result)
+	}
 	if result.Citations[0].Source != "runbook.md" {
 		t.Fatalf("source = %q", result.Citations[0].Source)
 	}
@@ -37,6 +40,9 @@ func TestChatServiceReturnsNoKnowledgeMessage(t *testing.T) {
 	}
 	if result.Answer != "知识库中没有检索到相关内容，请先上传对应 SOP 文档。" {
 		t.Fatalf("answer = %q", result.Answer)
+	}
+	if result.Plan == nil || len(result.Iterations) == 0 {
+		t.Fatalf("expected no-knowledge chat trace: %+v", result)
 	}
 	if len(result.Citations) != 0 {
 		t.Fatalf("citations = %d, want 0", len(result.Citations))

@@ -2,6 +2,7 @@ import { Send, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { sendChat, streamChat } from '../api/chat';
 import { ApiError } from '../api/client';
+import { AgentTracePanel } from '../components/AgentTracePanel';
 import { CitationList } from '../components/CitationList';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBanner } from '../components/ErrorBanner';
@@ -51,7 +52,15 @@ export function ChatPage() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
-              ? { ...m, content: full.data.answer || answer, citations: full.data.citations ?? [], traceId: full.traceId ?? result.traceId }
+              ? {
+                  ...m,
+                  content: full.data.answer || answer,
+                  citations: full.data.citations ?? [],
+                  plan: full.data.plan,
+                  iterations: full.data.iterations,
+                  steps: full.data.steps,
+                  traceId: full.data.trace_id || full.traceId || result.traceId,
+                }
               : m,
           ),
         );
@@ -60,7 +69,15 @@ export function ChatPage() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
-              ? { ...m, content: result.data.answer, citations: result.data.citations ?? [], traceId: result.traceId }
+              ? {
+                  ...m,
+                  content: result.data.answer,
+                  citations: result.data.citations ?? [],
+                  plan: result.data.plan,
+                  iterations: result.data.iterations,
+                  steps: result.data.steps,
+                  traceId: result.data.trace_id || result.traceId,
+                }
               : m,
           ),
         );
@@ -101,6 +118,9 @@ export function ChatPage() {
                 <p>{message.content || (loading ? '分析中...' : '')}</p>
                 {message.traceId ? <TraceId value={message.traceId} /> : null}
                 {message.role === 'assistant' ? <CitationList citations={message.citations} /> : null}
+                {message.role === 'assistant' ? (
+                  <AgentTracePanel plan={message.plan} iterations={message.iterations} steps={message.steps} />
+                ) : null}
               </article>
             ))}
           </div>

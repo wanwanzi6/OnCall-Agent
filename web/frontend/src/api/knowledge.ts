@@ -1,5 +1,5 @@
 import { apiRequest } from './client';
-import type { DocumentItem, SearchResult, UploadResult } from '../types/rag';
+import type { DocumentItem, KnowledgeSearchResponse, UploadResult } from '../types/rag';
 
 export const ALLOWED_UPLOAD_EXTS = ['.md', '.markdown', '.txt'];
 export const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -33,9 +33,9 @@ export async function deleteDocument(id: string) {
 }
 
 export async function searchKnowledge(query: string, topK: number) {
-  const result = await apiRequest<{ results: SearchResult[] }>('/knowledge/search', {
+  const result = await apiRequest<KnowledgeSearchResponse>('/knowledge/search', {
     method: 'POST',
     body: JSON.stringify({ query, top_k: topK }),
   });
-  return { ...result, data: result.data.results ?? [] };
+  return { ...result, data: { ...result.data, results: result.data.results ?? [] } };
 }

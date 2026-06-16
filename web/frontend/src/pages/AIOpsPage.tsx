@@ -1,6 +1,7 @@
 import { Copy, Download, Play } from 'lucide-react';
 import { useState } from 'react';
 import { analyzeAIOps } from '../api/aiops';
+import { AgentTracePanel } from '../components/AgentTracePanel';
 import { CitationList } from '../components/CitationList';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBanner } from '../components/ErrorBanner';
@@ -134,6 +135,16 @@ export function AIOpsPage() {
               <div className="section-title"><h2>Citations</h2></div>
               <CitationList citations={result.citations} />
             </div>
+          </section>
+
+          <section className="panel">
+            <div className="section-title"><h2>Agent Trace</h2></div>
+            <AgentTracePanel
+              plan={result.plan}
+              iterations={result.iterations}
+              steps={result.steps}
+              replanReason={result.replan_reason}
+            />
           </section>
 
           <section className="panel">
