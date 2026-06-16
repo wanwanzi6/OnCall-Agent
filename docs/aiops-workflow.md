@@ -2,6 +2,8 @@
 
 AI Ops 支持 `rule` 和 `agent` 两种模式。默认使用 `rule`，保证测试和 demo 稳定；`agent` 需要显式开启，并支持失败 fallback 到 rule workflow。
 
+整体架构中，Gin 只负责接收 `/api/aiops/analyze` 请求并返回统一响应；AI Ops 的任务编排在 Service 层完成。Agent 模式由 Eino 承接工具定义、工具调用记录和 LLM 报告生成。
+
 ## Rule Workflow
 
 ```mermaid
@@ -22,9 +24,9 @@ flowchart LR
 - RootCauseAnalyzer：规则判断 panic、restart_count 等证据。
 - ReportGenerator：输出结构化报告。
 
-## Agent Workflow
+## Eino Agent Workflow
 
-Agent 模式通过工具封装复用已有边界：
+Agent 模式通过 Eino `InvokableTool` 封装复用已有边界：
 
 - `query_active_alerts`
 - `query_internal_docs`
@@ -33,6 +35,22 @@ Agent 模式通过工具封装复用已有边界：
 - `get_current_time`
 
 工具只读，不包含自动修复、SQL 执行、系统命令执行或关闭告警能力。
+
+```mermaid
+flowchart LR
+  API["Gin AI Ops API"] --> S["AIOpsService"]
+  S --> A["EinoAgentAnalyzer"]
+  A --> P["System Prompt"]
+  A --> T["Eino Tool Set"]
+  A --> M["LLM Provider"]
+  T --> Alert["AlertProvider"]
+  T --> Docs["KnowledgeService/RAG"]
+  T --> Logs["LogProvider"]
+  T --> Metrics["MetricProvider"]
+  M --> Report["Structured Report"]
+```
+
+当前实现保留确定性 `AgentRunner`：它按 OnCall 排障的必要顺序调用 Eino 工具，再交给 LLM 生成报告。这样做的目标是让 demo、测试和 fallback 路径稳定，同时保留 Eino 工具抽象和真实 LLM 接入能力。
 
 ## Fallback
 

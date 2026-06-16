@@ -1,6 +1,6 @@
 # 智能 Oncall 助手
 
-智能 Oncall 助手是一个面向后端研发、SRE 和平台工程师的故障排查辅助系统。项目支持 SOP 知识库 RAG 问答、告警分析、日志/指标证据收集、Agent 工具调用和结构化故障报告生成。默认环境使用 `mock + memory + rule`，不依赖真实 LLM、DashScope、Milvus、Prometheus 或外部网络。
+智能 Oncall 助手是一个面向后端研发、SRE 和平台工程师的故障排查辅助系统。项目采用 **Gin 搭建 API 服务，Eino 编排 Agent 工具调用** 的架构，支持 SOP 知识库 RAG 问答、告警分析、日志/指标证据收集、Agent 工具调用和结构化故障报告生成。默认环境使用 `mock + memory + rule`，不依赖真实 LLM、DashScope、Milvus、Prometheus 或外部网络。
 
 ## 核心功能
 
@@ -13,7 +13,8 @@
 
 ## 技术栈
 
-- 后端：Go 1.23+、Gin、slog、YAML config。
+- API 层：Go 1.23+、Gin、slog、YAML config。
+- Agent 编排：Eino Agent、JSON Schema Tool、只读工具调用、fallback。
 - RAG：Loader、Splitter、Mock/DashScope Embedder、Memory/Milvus VectorStore。
 - AI Ops：RuleBasedAnalyzer、EinoAgentAnalyzer、Alert/Log/Metric Provider。
 - 前端：React、Vite、TypeScript、lucide-react、marked、DOMPurify。
@@ -24,20 +25,35 @@
 ```mermaid
 flowchart LR
   FE["React Console"] --> API["Gin API"]
-  API --> Chat["ChatService"]
-  API --> KS["KnowledgeService"]
-  API --> AO["AIOpsService"]
+  API --> MW["Middleware: trace/CORS/recovery/access log"]
+  MW --> Chat["ChatService"]
+  MW --> KS["KnowledgeService"]
+  MW --> AO["AIOpsService"]
   KS --> RAG["Loader -> Splitter -> Embedder -> VectorStore"]
   Chat --> KS
   AO --> Rule["Rule Workflow"]
-  AO --> Agent["Eino Agent Workflow"]
+  AO --> Agent["Eino Agent Analyzer"]
   Rule --> P["Mock/Prometheus Providers"]
-  Agent --> T["Tool Wrappers"]
+  Agent --> T["Eino Tools: alert/docs/logs/metrics/time"]
+  Agent --> LLM["LLM Provider"]
   T --> P
   T --> KS
 ```
 
 更完整说明见 [docs/architecture.md](docs/architecture.md)。
+
+相关设计文档：
+
+- [RAG 设计](docs/rag-design.md)
+- [AI Ops 工作流](docs/aiops-workflow.md)
+- [评测说明](docs/evaluation.md)
+
+架构分工：
+
+- Gin 负责 HTTP 入口、路由注册、参数绑定、统一响应、trace_id、中间件、panic recovery 和 CORS。
+- Service 负责业务边界，连接 Chat、Knowledge、AI Ops 三类能力。
+- Eino 负责 Agent 模式下的工具抽象、工具调用记录、LLM 报告生成和执行约束。
+- Rule workflow 保留为确定性 fallback，保证 demo、测试和异常场景稳定。
 
 ## 快速开始
 
@@ -322,10 +338,10 @@ MILVUS_ADDRESS=milvus:19530
 ```text
 cmd/server                 # 服务入口
 configs                    # 默认 YAML 配置
-internal/api               # HTTP 路由、中间件、统一响应
-internal/service           # Chat、Knowledge、AI Ops 编排
+internal/api               # Gin HTTP 路由、中间件、统一响应
+internal/service           # Chat、Knowledge、AI Ops 业务编排和 Eino Agent Analyzer
 internal/rag               # Loader、Splitter、Embedder、VectorStore
-internal/tools             # Provider 和工具边界
+internal/tools             # Provider 和 Agent 工具边界
 internal/infra             # config、trace、logger、upload
 web/frontend               # React + Vite 控制台
 docs                       # 架构、RAG、AI Ops、安全、demo、简历文档
@@ -346,12 +362,12 @@ deployments                # Dockerfile、Nginx、Milvus compose
 
 ## 阶段性演进
 
-- 阶段 1：后端骨架、基础 API、Service 分层、Mock AI Ops。
+- 阶段 1：基于 Gin 的后端 API 骨架、Service 分层、Mock AI Ops。
 - 阶段 2：配置安全、统一错误、trace_id、上传校验、日志和测试。
 - 阶段 3A：本地 RAG 闭环。
 - 阶段 3B：DashScope Embedder 和 Milvus VectorStore 可配置切换。
 - 阶段 4：规则版 AI Ops 工作流。
-- 阶段 5：Eino Agent 编排和 fallback。
+- 阶段 5：基于 Eino 的 Agent 工具编排和 fallback。
 - 阶段 6：React 前端控制台。
 - 阶段 7：测试、部署、demo 数据、文档和简历包装。
 
@@ -360,7 +376,7 @@ deployments                # Dockerfile、Nginx、Milvus compose
 短版：
 
 ```text
-基于 Go + Eino + Milvus + React 构建智能 Oncall 助手，支持 SOP 知识库 RAG 问答、告警自动分析、日志/指标证据收集、Eino Agent 工具调用和结构化故障报告生成。
+基于 Go + Gin + Eino + Milvus + React 构建智能 Oncall 助手，使用 Gin 搭建 API 服务、Eino 编排 Agent 工具调用，支持 SOP 知识库 RAG 问答、告警自动分析、日志/指标证据收集和结构化故障报告生成。
 ```
 
 详见 [docs/resume-description.md](docs/resume-description.md)。
